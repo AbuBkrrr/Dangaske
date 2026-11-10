@@ -261,7 +261,7 @@ async function handleMessage(msg) {
     db.prepare("INSERT INTO users(phone, name, role) VALUES(?, ?, 'admin')").run(phone, config.COMPANY);
     user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone);
   }
-  if (!user || !['admin', 'agent'].includes(user.role)) {
+  if (!user || user.suspended || !['admin', 'agent'].includes(user.role)) {
     await sendText(phone, `Welcome to ${config.SITE_NAME} by ${config.COMPANY}.\nBrowse properties, easy-buy plans and escrow at ${config.BASE_URL}\n\nListing by WhatsApp is available to registered agents - sign up on the website as an agent first.`);
     return;
   }

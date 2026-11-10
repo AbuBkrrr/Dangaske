@@ -3,7 +3,7 @@ const path = require('path');
 const express = require('express');
 const multer = require('multer');
 const config = require('./config');
-const { db, allSettings, setSetting, DEFAULT_SETTINGS } = require('./db');
+const { db, audit, allSettings, setSetting, DEFAULT_SETTINGS } = require('./db');
 const auth = require('./auth');
 const { HttpError, requireAuth, requireRole } = auth;
 const listings = require('./listings');
@@ -30,8 +30,22 @@ const upload = multer({
   fileFilter: (_req, file, cb) => cb(null, /^(image|video)\//.test(file.mimetype)),
 });
 
-const publicUser = (u) => (u ? { id: u.id, phone: u.phone, name: u.name, role: u.role } : null);
+const publicUser = (u) => (u ? {
+  id: u.id, phone: u.phone, name: u.name, role: u.role, account_type: u.account_type, company: u.company, bio: u.bio, city: u.city,
+  service_category: u.service_category, verified: Boolean(u.verified), kyc_status: u.kyc_status, kyc_note: u.kyc_note,
+} : null);
 const api = express.Router();
+
+// Audit trail: every admin action and every sensitive member action is recorded.
+const AUDITED = /^\/(admin\/|escrows\/|me\/kyc$|spvs\/\d+\/invest$|properties\/\d+(\/(sold|submit|escrow))?$)/;
+api.use((req, res, next) => {
+  if (req.method !== 'GET' && AUDITED.test(req.path)) {
+    res.on('finish', () => {
+      if (res.statusCode < 400 && req.user) audit(req.user.id, `${req.method} ${req.path}`, req.is('json') ? JSON.stringify(req.body || {}) : '');
+    });
+  }
+  next();
+});
 
 // ---------- Auth: phone number + WhatsApp verification ----------
 
@@ -57,6 +71,8 @@ api.post('/auth/verify', auth.rateLimit('verify', 20, 15 * 60 * 1000), (req, res
   if (!phone) throw new HttpError(400, 'Enter a valid phone number.');
   auth.checkOtp(phone, req.body.code);
   const user = auth.upsertUser(phone, { name: req.body.name, role: req.body.role });
+  if (user.isNew && user.role === 'agent') { db.prepare("UPDATE users SET account_type = 'agent' WHERE id = ?").run(user.id); user.account_type = 'agent'; }
+  audit(user.id, user.isNew ? 'signup' : 'login');
   auth.createSession(res, user.id);
   res.json({ user: publicUser(user) });
 });
@@ -78,17 +94,15 @@ api.get('/me', (req, res) => {
       default_unlock_fee: Number(s.default_unlock_fee),
       escrow_fee_pct: Number(s.escrow_fee_pct),
       support_whatsapp: s.support_whatsapp,
+      contact_email: s.contact_email,
+      office_address: s.office_address,
+      currency_rates: (() => { try { return JSON.parse(s.currency_rates); } catch { return {}; } })(),
       purposes: listings.PURPOSES,
       types: listings.TYPES,
     },
   });
 });
 
-api.patch('/me', requireAuth, (req, res) => {
-  const name = listings.str(req.body.name, 80);
-  db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, req.user.id);
-  res.json({ user: publicUser({ ...req.user, name }) });
-});
 
 // ---------- Listings ----------
 
@@ -336,7 +350,7 @@ admin.get('/overview', (req, res) => {
     escrows: payments.escrowsFor('1=1'),
     subscriptions: payments.subscriptionsFor('1=1'),
     plans: db.prepare('SELECT * FROM plans ORDER BY months').all(),
-    users: db.prepare('SELECT id, phone, name, role, created_at FROM users ORDER BY id DESC LIMIT 200').all(),
+    users: db.prepare('SELECT id, phone, name, role, created_at, account_type, company, verified, kyc_status, kyc_doc_type, kyc_note, suspended FROM users ORDER BY id DESC LIMIT 200').all(),
     settings: allSettings(),
     integrations: {
       whatsapp: config.WHATSAPP_LIVE, payments: config.PAYMENTS_LIVE, video_compression: media.HAS_FFMPEG,
@@ -364,7 +378,13 @@ admin.post('/properties/:id/reject', (req, res) => {
 admin.put('/settings', (req, res) => {
   for (const key of Object.keys(DEFAULT_SETTINGS)) {
     if (req.body[key] === undefined) continue;
-    let v = String(req.body[key]).trim().slice(0, 100);
+    let v = String(req.body[key]).trim().slice(0, 200);
+    if (key === 'currency_rates') {
+      try {
+        const r = JSON.parse(v);
+        v = JSON.stringify(Object.fromEntries(Object.entries(r).filter(([k, n]) => /^[A-Z]{3}$/.test(k) && Number(n) > 0).slice(0, 8)));
+      } catch { continue; }
+    }
     if (key === 'default_unlock_fee') v = String(listings.int(v, 1e7));
     if (key === 'escrow_fee_pct') v = String(Math.min(Math.max(Number(v) || 0, 0), 20));
     setSetting(key, v);
@@ -405,6 +425,8 @@ admin.post('/broadcast', (req, res) => {
   res.json({ ok: true });
 });
 
+api.use(require('./extras')({ publicUser }));
+api.use(require('./invest'));
 api.use('/admin', admin);
 api.use((_req, _res, next) => next(new HttpError(404, 'Not found.')));
 app.use('/api', api);

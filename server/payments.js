@@ -87,6 +87,22 @@ function fulfil(payment) {
       }
       return { redirect: '/dashboard?tab=plans', message: 'Payment received. Thank you!' };
     }
+    if (fresh.purpose === 'investment') {
+      const inv = db.prepare('SELECT * FROM investments WHERE id = ?').get(fresh.target_id);
+      if (!already && inv && inv.status === 'pending') {
+        db.prepare("UPDATE investments SET status = 'active' WHERE id = ?").run(inv.id);
+        const s = db.prepare('SELECT * FROM spvs WHERE id = ?').get(inv.spv_id);
+        const units = db.prepare("SELECT COALESCE(SUM(units),0) AS n FROM investments WHERE spv_id = ? AND status = 'active'").get(s.id).n;
+        if (units >= s.total_units && s.status === 'open') db.prepare("UPDATE spvs SET status = 'funded' WHERE id = ?").run(s.id);
+        after.push(() => {
+          push.notifyAdmins({
+            title: units > s.total_units ? 'Investment offer OVERSUBSCRIBED - review' : units >= s.total_units ? 'Investment offer fully funded' : 'New investment',
+            body: `${inv.units} unit(s), ${listings.naira(inv.amount)} in ${s.title}`, url: '/admin?tab=invest',
+          });
+        });
+      }
+      return { redirect: '/dashboard?tab=invest', message: 'Investment confirmed. Your units are in your portfolio.' };
+    }
     return { redirect: '/dashboard', message: 'Payment received.' };
   })();
   for (const fn of after) fn();

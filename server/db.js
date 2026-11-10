@@ -172,10 +172,65 @@ CREATE TABLE IF NOT EXISTS wa_state (
 CREATE TABLE IF NOT EXISTS wa_seen (id TEXT PRIMARY KEY, at INTEGER NOT NULL);
 `);
 
+db.exec(`
+CREATE TABLE IF NOT EXISTS reports (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER,
+  property_id INTEGER,
+  kind TEXT NOT NULL DEFAULT 'contact',        -- contact | listing | security
+  name TEXT NOT NULL DEFAULT '',
+  contact TEXT NOT NULL DEFAULT '',
+  message TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',         -- open | resolved
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS posts (
+  id INTEGER PRIMARY KEY,
+  slug TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'insight',    -- insight | news | guide
+  body TEXT NOT NULL DEFAULT '',
+  published INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS audit (
+  id INTEGER PRIMARY KEY,
+  actor_id INTEGER,
+  action TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`);
+
+// Columns added after the first release.
+const addColumn = (table, name, ddl) => {
+  if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${ddl}`);
+};
+addColumn('users', 'account_type', "TEXT NOT NULL DEFAULT 'individual'"); // individual | agent | agency | developer | service
+addColumn('users', 'company', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'bio', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'city', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'service_category', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'verified', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('users', 'kyc_status', "TEXT NOT NULL DEFAULT 'none'");       // none | pending | approved | rejected
+addColumn('users', 'kyc_doc_type', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'kyc_file', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'kyc_note', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'suspended', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('properties', 'verified', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('properties', 'featured', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('properties', 'new_dev', 'INTEGER NOT NULL DEFAULT 0');
+
+const audit = (actorId, action, detail = '') =>
+  db.prepare('INSERT INTO audit(actor_id, action, detail) VALUES(?,?,?)').run(actorId || null, String(action).slice(0, 120), String(detail).slice(0, 500));
+
 const DEFAULT_SETTINGS = {
   default_unlock_fee: '1000', // naira charged to view full details of a listing
   escrow_fee_pct: '1.5',
   support_whatsapp: '',
+  contact_email: '',
+  office_address: '',
+  currency_rates: '{"USD":1600,"GBP":2050,"AED":435}', // naira per 1 unit, display only
 };
 
 const getSetting = (key) => {
@@ -197,4 +252,4 @@ if (!db.prepare('SELECT 1 FROM plans LIMIT 1').get()) {
   ins.run('Flexi 24', 24, 20, 12);
 }
 
-module.exports = { db, getSetting, setSetting, allSettings, DEFAULT_SETTINGS };
+module.exports = { db, audit, getSetting, setSetting, allSettings, DEFAULT_SETTINGS };

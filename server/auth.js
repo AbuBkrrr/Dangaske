@@ -66,6 +66,8 @@ function upsertUser(phone, { name, role } = {}) {
     const info = db.prepare('INSERT INTO users(phone, name, role) VALUES(?,?,?)').run(phone, String(name || '').slice(0, 80), r);
     user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
     user.isNew = true;
+  } else if (user.suspended) {
+    throw new HttpError(403, 'This account is suspended. Please contact support.');
   } else if (isAdmin && user.role !== 'admin') {
     db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(user.id);
     user.role = 'admin';
@@ -94,7 +96,7 @@ function loadUser(req, _res, next) {
   const token = readCookie(req, 'sid');
   if (token) {
     const row = db
-      .prepare('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?')
+      .prepare('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ? AND u.suspended = 0')
       .get(sha(token), Date.now());
     if (row) req.user = row;
   }

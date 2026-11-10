@@ -7,6 +7,11 @@
 
   const e = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const money = (n) => '₦' + Number(n || 0).toLocaleString('en-NG');
+  const SYM = { NGN: '₦', USD: '$', GBP: '£', AED: 'AED ' };
+  const currency = () => { try { const c = localStorage.getItem('cur'); return c && (S.cfg.currency_rates || {})[c] ? c : 'NGN'; } catch { return 'NGN'; } };
+  /** Listing prices in the visitor's chosen display currency (payments are always in naira). */
+  const price = (n) => { const c = currency(); return c === 'NGN' ? money(n) : '≈ ' + (SYM[c] || c + ' ') + Math.round(Number(n || 0) / S.cfg.currency_rates[c]).toLocaleString('en'); };
+  const vbadge = '<span class="vb" title="Verified">✔ Verified</span>';
   const cap = (s) => String(s || '').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
   const date = (s) => (s ? new Date(s.replace(' ', 'T') + (s.length > 10 ? 'Z' : '')).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
   const mb = (b) => (b / 1048576).toFixed(1) + ' MB';
@@ -155,8 +160,8 @@
   const specs = (p) => [p.bedrooms && `${p.bedrooms} bed`, p.bathrooms && `${p.bathrooms} bath`, p.size_sqm && `${Number(p.size_sqm).toLocaleString()} m²`, cap(p.type)].filter(Boolean).map((x) => `<span>${e(x)}</span>`).join('');
   const pcard = (p) => `<a class="pcard ${p.status === 'sold' ? 'sold' : ''}" href="/p/${p.id}" data-link>
     <div class="pimg">${p.cover_thumb ? `<img src="${e(p.cover_thumb)}" alt="" loading="lazy">` : ''}
-      <div class="tags">${p.status === 'sold' ? '<span class="tag red">Sold</span>' : `<span class="tag">For ${e(p.purpose)}</span>`}${p.easy_buy && p.status !== 'sold' ? '<span class="tag gold">Easy-buy</span>' : ''}${!['active', 'sold'].includes(p.status) ? `<span class="tag grey">${e(p.status)}</span>` : ''}</div></div>
-    <div class="pbody"><div class="price notranslate">${money(p.price)}${p.purpose === 'rent' ? '<small> /yr</small>' : ''}</div>
+      <div class="tags">${p.status === 'sold' ? '<span class="tag red">Sold</span>' : `<span class="tag">For ${e(p.purpose)}</span>`}${p.easy_buy && p.status !== 'sold' ? '<span class="tag gold">Easy-buy</span>' : ''}${p.new_dev ? '<span class="tag blue">New development</span>' : ''}${!['active', 'sold'].includes(p.status) ? `<span class="tag grey">${e(p.status)}</span>` : ''}</div>${p.verified ? '<span class="vtag">✔ Verified</span>' : ''}</div>
+    <div class="pbody"><div class="price notranslate">${price(p.price)}${p.purpose === 'rent' ? '<small> /yr</small>' : ''}</div>
       <div class="ptitle">${e(p.title)}</div><div class="ploc">${e(place(p))}</div><div class="specs">${specs(p)}</div></div></a>`;
   const cards = (items, empty) => (items.length ? `<div class="cards">${items.map(pcard).join('')}</div>` : `<p class="muted pad center">${e(empty)}</p>`);
 
@@ -211,6 +216,8 @@
         <input name="max" inputmode="numeric" placeholder="Max price ₦" value="${e(f.max)}" aria-label="Maximum price">
         <button class="btn">Filter</button>
         <label class="check"><input type="checkbox" name="easy" value="1"${f.easy ? ' checked' : ''}> Easy-buy only</label>
+        <label class="check"><input type="checkbox" name="verified" value="1"${f.verified ? ' checked' : ''}> Verified only</label>
+        <label class="check"><input type="checkbox" name="new_dev" value="1"${f.new_dev ? ' checked' : ''}> New developments</label>
         <select name="sort" aria-label="Sort">${opts([['', 'Newest'], ['price_asc', 'Price: low to high'], ['price_desc', 'Price: high to low']], f.sort)}</select></form>
       <p class="muted">${data.total} ${data.total === 1 ? 'property' : 'properties'} found</p>
       ${cards(data.items, 'Nothing matches those filters yet. Try widening your search or send us a request.')}
@@ -229,7 +236,9 @@
         <div class="tags">${sold ? '<span class="tag red">Sold</span>' : `<span class="tag">For ${e(p.purpose)}</span>`}${p.easy_buy && !sold ? '<span class="tag gold">Easy-buy</span>' : ''}</div></div>
       ${media.length > 1 ? `<div class="thumbs">${media.map((m, i) => `<button class="${i ? '' : 'on'} ${m.kind === 'video' ? 'play' : ''}" data-i="${i}" aria-label="Media ${i + 1}">${m.thumb ? `<img src="${e(m.thumb)}" alt="">` : ''}</button>`).join('')}</div>` : ''}
       <h1 style="margin-top:18px">${e(p.title)}</h1><p class="muted">${e(place(p))}</p>
-      <div class="facts"><div class="fact"><small>Price</small><b class="notranslate">${money(p.price)}</b></div><div class="fact"><small>Type</small><b>${e(cap(p.type))}</b></div>
+      <div class="chips" style="margin-bottom:6px">${p.verified ? '<span class="chip ok">✔ Verified listing</span>' : ''}${p.agent && p.agent.verified ? '<span class="chip ok">✔ Verified professional</span>' : ''}${!sold ? '<span class="chip ok">🛡 Escrow-ready</span>' : ''}${p.new_dev ? '<span class="chip">New development</span>' : ''}<a class="chip" href="/trust" data-link>What do these mean?</a></div>
+      ${p.agent ? `<p class="small">Listed by <a href="/agents/${p.agent.id}" data-link>${e(p.agent.name)}</a></p>` : ''}
+      <div class="facts"><div class="fact"><small>Price</small><b class="notranslate">${money(p.price)}</b>${currency() !== 'NGN' ? `<small class="notranslate">${price(p.price)}</small>` : ''}</div><div class="fact"><small>Type</small><b>${e(cap(p.type))}</b></div>
         ${p.bedrooms ? `<div class="fact"><small>Bedrooms</small><b>${p.bedrooms}</b></div>` : ''}${p.bathrooms ? `<div class="fact"><small>Bathrooms</small><b>${p.bathrooms}</b></div>` : ''}
         ${p.size_sqm ? `<div class="fact"><small>Size</small><b>${Number(p.size_sqm).toLocaleString()} m²</b></div>` : ''}<div class="fact"><small>Photos / videos</small><b>${p.image_count} / ${p.video_count}</b></div></div>
       ${p.locked ? `<p class="prose">${e(p.excerpt)}</p>
@@ -252,6 +261,7 @@
           <button class="btn sm" data-act="subscribe" data-id="${p.id}" data-plan="${pl.plan_id}">Choose this plan</button></div>`).join('')}</div></div>` : ''}
       ${!sold && !p.can_manage ? `<div class="card"><h3>Buy safely with escrow</h3><p class="small muted">We hold your payment and only release it to the seller when you confirm handover. Fee: ${S.cfg.escrow_fee_pct}%.</p><button class="btn block" data-act="escrow" data-id="${p.id}" data-price="${p.price}">Start escrow</button></div>` : ''}
       <div class="card"><h3>Share this property</h3>${shareBar(p)}</div>
+      <p class="small center"><a href="/trust?report=${p.id}" data-link>Report this listing</a></p>
     </aside></div>`;
     app.querySelectorAll('.thumbs button').forEach((b) => b.addEventListener('click', () => {
       app.querySelectorAll('.thumbs button').forEach((x) => x.classList.toggle('on', x === b));
@@ -281,6 +291,7 @@
         <div><label>Features <span class="muted small">(comma separated)</span></label><input name="features" value="${v('features')}" placeholder="Borehole, parking, BQ"></div>
         <div><label>Description</label><textarea name="description" maxlength="5000">${v('description')}</textarea></div>
         <label class="check"><input type="checkbox" name="easy_buy" value="1"${p && p.easy_buy ? ' checked' : ''}> Offer easy-buy instalment plans on this property</label>
+        <label class="check"><input type="checkbox" name="new_dev" value="1"${p && p.new_dev ? ' checked' : ''}> This is a new development / off-plan project</label>
         ${S.user.role === 'admin' ? `<div><label>Fee to view full details (₦) <span class="muted small">— leave empty for site default (${money(S.cfg.default_unlock_fee)}), 0 = free</span></label><input name="unlock_fee" inputmode="numeric" value="${p && p.unlock_fee_override != null ? p.unlock_fee_override : ''}"></div>` : ''}
         <div class="row"><button class="btn">${p ? 'Save changes' : 'Save and add photos'}</button></div></form>
       ${p ? `<section class="card"><div class="spread"><h2>Photos &amp; videos</h2><span class="small muted">Compressed automatically to save space</span></div>
@@ -292,7 +303,7 @@
           ${p.status === 'active' ? `<button class="btn danger" data-act="sold" data-id="${p.id}">Mark as sold</button>` : ''}<button class="btn ghost" id="del">Delete listing</button></div>` : ''}`;
       $('#pf').addEventListener('submit', (ev) => {
         ev.preventDefault();
-        const body = formData(ev.target); body.easy_buy = Boolean(body.easy_buy);
+        const body = formData(ev.target); body.easy_buy = Boolean(body.easy_buy); body.new_dev = Boolean(body.new_dev);
         busy($('button', ev.target), async () => {
           if (p) { p = await api('/properties/' + p.id, { method: 'PATCH', body }); toast('Saved.'); draw(); }
           else { const n = await api('/properties', { method: 'POST', body }); toast('Saved. Now add photos.'); history.replaceState(null, '', '/post?id=' + n.id); p = n; draw(); }
@@ -364,9 +375,10 @@
     if (needLogin()) return (app.innerHTML = '<p class="pad center muted">Sign in to see your dashboard.</p>');
     const tab = q.get('tab') || 'overview';
     const pro = ['agent', 'admin'].includes(S.user.role);
-    const tabs = [['overview', 'Overview'], ...(pro ? [['listings', 'My listings']] : []), ['plans', 'Easy-buy'], ['escrow', 'Escrow'], ['alerts', `Alerts${S.unread ? ` (${S.unread})` : ''}`]];
+    const tabs = [['overview', 'Overview'], ...(pro ? [['listings', 'My listings']] : []), ['plans', 'Easy-buy'], ['escrow', 'Escrow'], ['invest', 'Investments'], ['verify', 'Verification'], ['alerts', `Alerts${S.unread ? ` (${S.unread})` : ''}`]];
     let body = '';
-    if (tab === 'listings') body = cards(await api('/my/properties'), 'You have not posted any property yet.');
+    if (DG.dashTabs[tab]) body = await DG.dashTabs[tab]();
+    else if (tab === 'listings') body = cards(await api('/my/properties'), 'You have not posted any property yet.');
     else if (tab === 'plans') { const subs = await api('/my/subscriptions'); body = subs.map((s) => subBlock(s)).join('') || '<p class="muted">No easy-buy plans yet. Look for the “Easy-buy” tag on listings.</p>'; }
     else if (tab === 'escrow') { const es = await api('/my/escrows'); body = es.length ? `<div class="tablewrap"><table><tr><th>Property</th><th>Amount</th><th>You are</th><th>Status</th><th></th></tr>${es.map((x) => escrowRow(x)).join('')}</table></div>` : '<p class="muted">No escrow transactions yet.</p>'; }
     else if (tab === 'alerts') {
@@ -377,7 +389,7 @@
       <div class="grid g3" style="margin-top:16px"><a class="card" href="/listings" data-link><h3>Browse properties</h3><span class="muted small">Find your next home or plot</span></a><a class="card" href="/request" data-link><h3>Request a property</h3><span class="muted small">Tell us your specification</span></a><a class="card" href="/dashboard?tab=alerts" data-link><h3>Notifications</h3><span class="muted small">New listings and sales activity</span></a></div>`;
     app.innerHTML = `<h1 style="margin-top:28px">Dashboard</h1><div class="tabs">${tabs.map(([k, t]) => `<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${e(t)}</button>`).join('')}</div>${body}`;
     app.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => go('/dashboard?tab=' + b.dataset.tab)));
-    const nf = $('#nf'); if (nf) nf.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', nf), async () => { S.user = (await api('/me', { method: 'PATCH', body: formData(nf) })).user; toast('Saved.'); }); });
+    if (DG.dashBind) DG.dashBind(tab);
   }
 
   async function adminPage(q) {
@@ -387,26 +399,27 @@
     const s = d.stats, ig = d.integrations;
     const on = (v) => (v ? '<span class="status active">Connected</span>' : '<span class="status pending">Not set up</span>');
     const prow = (p) => `<tr><td>#${p.id} <a href="/p/${p.id}" data-link>${e(p.title)}</a><br><span class="small muted">${e(place(p))}</span></td><td class="notranslate">${money(p.price)}</td><td>${status(p.status)}</td><td>${p.image_count}/${p.video_count}</td>
-      <td><div class="row">${p.status === 'pending' ? `<button class="btn sm" data-act="approve" data-id="${p.id}">Approve</button><button class="btn sm ghost" data-act="reject" data-id="${p.id}">Reject</button>` : ''}<a class="btn sm ghost" href="/post?id=${p.id}" data-link>Edit</a>${p.status === 'active' ? `<button class="btn sm danger" data-act="sold" data-id="${p.id}">Sold</button>` : ''}</div></td></tr>`;
+      <td><div class="row">${p.status === 'pending' ? `<button class="btn sm" data-act="approve" data-id="${p.id}">Approve</button><button class="btn sm ghost" data-act="reject" data-id="${p.id}">Reject</button>` : ''}<a class="btn sm ghost" href="/post?id=${p.id}" data-link>Edit</a>${p.status === 'active' ? `<button class="btn sm ghost" data-act="pflag" data-id="${p.id}" data-k="verified" data-v="${p.verified ? 0 : 1}">${p.verified ? '✔ Verified' : 'Verify'}</button><button class="btn sm ghost" data-act="pflag" data-id="${p.id}" data-k="featured" data-v="${p.featured ? 0 : 1}">${p.featured ? '★ Featured' : 'Feature'}</button><button class="btn sm danger" data-act="sold" data-id="${p.id}">Sold</button>` : ''}</div></td></tr>`;
     const body = {
       listings: `<div class="tablewrap"><table><tr><th>Listing</th><th>Price</th><th>Status</th><th>Photos/videos</th><th></th></tr>${[...d.pending, ...d.listings].map(prow).join('')}</table></div>`,
       escrow: d.escrows.length ? `<div class="tablewrap"><table><tr><th>Property</th><th>Amount</th><th>Parties</th><th>Status</th><th></th></tr>${d.escrows.map((x) => escrowRow(x, true)).join('')}</table></div><p class="small muted">Releasing marks the property sold. Pay out the seller (or refund the buyer) from your Paystack dashboard / bank.</p>` : '<p class="muted">No escrows yet.</p>',
       plans: `<h3>Plans offered</h3><div class="tablewrap"><table><tr><th>Name</th><th>Months</th><th>Deposit %</th><th>Markup %</th><th>Active</th><th></th></tr>${[...d.plans, { id: '', name: '', months: '', deposit_pct: '', markup_pct: '', active: 1 }].map((p) => `<tr data-plan="${p.id}"><td><input name="name" value="${e(p.name)}" placeholder="New plan name"></td><td><input name="months" inputmode="numeric" value="${e(p.months)}"></td><td><input name="deposit_pct" inputmode="decimal" value="${e(p.deposit_pct)}"></td><td><input name="markup_pct" inputmode="decimal" value="${e(p.markup_pct)}"></td><td><input type="checkbox" name="active" style="width:auto"${p.active ? ' checked' : ''}></td><td><button class="btn sm" data-act="saveplan">${p.id ? 'Save' : 'Add'}</button></td></tr>`).join('')}</table></div>
         <h3 style="margin-top:24px">Customer plans</h3>${d.subscriptions.map((x) => subBlock(x, true)).join('') || '<p class="muted">None yet.</p>'}`,
       users: `<div class="tablewrap"><table><tr><th>Member</th><th>Phone</th><th>Joined</th><th>Role</th></tr>${d.users.map((u) => `<tr><td>${e(u.name || '—')}</td><td class="notranslate">+${e(u.phone)}</td><td>${date(u.created_at)}</td><td><select data-role="${u.id}"${u.id === S.user.id ? ' disabled' : ''}>${opts(['buyer', 'agent', 'admin'], u.role)}</select></td></tr>`).join('')}</table></div>`,
-      settings: `<form id="sf" class="card grid"><h3>Fees</h3><div class="grid g3"><div><label>Default fee to view full details (₦)</label><input name="default_unlock_fee" inputmode="numeric" value="${e(d.settings.default_unlock_fee)}"></div><div><label>Escrow fee (%)</label><input name="escrow_fee_pct" inputmode="decimal" value="${e(d.settings.escrow_fee_pct)}"></div><div><label>Support WhatsApp number</label><input name="support_whatsapp" value="${e(d.settings.support_whatsapp)}"></div></div><div><button class="btn">Save settings</button></div></form>
+      settings: `<form id="sf" class="card grid"><h3>Fees</h3><div class="grid g3"><div><label>Default fee to view full details (₦)</label><input name="default_unlock_fee" inputmode="numeric" value="${e(d.settings.default_unlock_fee)}"></div><div><label>Escrow fee (%)</label><input name="escrow_fee_pct" inputmode="decimal" value="${e(d.settings.escrow_fee_pct)}"></div><div><label>Support WhatsApp number</label><input name="support_whatsapp" value="${e(d.settings.support_whatsapp)}"></div></div><div class="grid g3"><div><label>Contact email</label><input name="contact_email" type="email" value="${e(d.settings.contact_email)}"></div><div><label>Office address</label><input name="office_address" value="${e(d.settings.office_address)}"></div><div><label>Display currency rates (₦ per 1 unit, JSON)</label><input name="currency_rates" value="${e(d.settings.currency_rates)}"></div></div><div><button class="btn">Save settings</button></div></form>
         <form id="bf" class="card grid" style="margin-top:16px"><h3>Send a push notification to all members</h3><input name="title" placeholder="Title" required maxlength="80"><input name="body" placeholder="Message" maxlength="200"><div><button class="btn gold">Send to ${s.push_devices} device(s)</button></div></form>
         <div class="card" style="margin-top:16px"><h3>Integrations</h3><table><tr><td>WhatsApp (login codes + listing bot)</td><td>${on(ig.whatsapp)}</td></tr><tr><td>Paystack payments</td><td>${on(ig.payments)}</td></tr><tr><td>Video compression (ffmpeg)</td><td>${on(ig.video_compression)}</td></tr><tr><td>Auto-post to Facebook page</td><td>${on(ig.facebook)}</td></tr><tr><td>Auto-post to Telegram channel</td><td>${on(ig.telegram)}</td></tr></table><p class="small muted">Set these up in the server's .env file — see the README.</p></div>`,
-    }[tab] || '';
+    }[DG.adminTabs[tab] ? '' : tab] || (DG.adminTabs[tab] ? await DG.adminTabs[tab](d) : '');
     app.innerHTML = `<h1 style="margin-top:28px">Admin</h1>
       <div class="stats"><div class="stat"><b>${s.members}</b>Members</div><div class="stat"><b>${s.active}</b>Live listings</div><div class="stat"><b>${s.pending}</b>Awaiting approval</div><div class="stat"><b>${s.sold}</b>Sold</div><div class="stat"><b class="notranslate">${money(s.unlock_revenue)}</b>Unlock revenue</div><div class="stat"><b class="notranslate">${money(s.escrow_held)}</b>Held in escrow</div><div class="stat"><b>${mb(s.storage_used)}</b>Media storage (${mb(s.storage_saved)} saved)</div></div>
-      <div class="tabs">${[['listings', 'Listings'], ['escrow', 'Escrow'], ['plans', 'Easy-buy'], ['users', 'Members'], ['settings', 'Settings']].map(([k, t]) => `<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${t}</button>`).join('')}</div>${body}`;
+      <div class="tabs">${[['listings', 'Listings'], ['escrow', 'Escrow'], ['plans', 'Easy-buy'], ['invest', 'Investments'], ['users', 'Members'], ['verify', 'Verification'], ['reports', 'Reports'], ['posts', 'Articles'], ['audit', 'Audit trail'], ['settings', 'Settings']].map(([k, t]) => `<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${t}</button>`).join('')}</div>${body}`;
     app.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => go('/admin?tab=' + b.dataset.tab)));
     app.querySelectorAll('[data-role]').forEach((sel) => sel.addEventListener('change', () => busy(sel, async () => { await api(`/admin/users/${sel.dataset.role}/role`, { method: 'POST', body: { role: sel.value } }); toast('Role updated.'); })));
     app.querySelectorAll('[data-act=saveplan]').forEach((b) => b.addEventListener('click', () => busy(b, async () => {
       const tr = b.closest('tr'); const body = {}; tr.querySelectorAll('input').forEach((i) => (body[i.name] = i.type === 'checkbox' ? i.checked : i.value));
       await api('/admin/plans' + (tr.dataset.plan ? '/' + tr.dataset.plan : ''), { method: tr.dataset.plan ? 'PUT' : 'POST', body }); toast('Plan saved.'); render();
     })));
+    if (DG.adminBind) DG.adminBind(tab, d);
     const sf = $('#sf'); if (sf) sf.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', sf), async () => { await api('/admin/settings', { method: 'PUT', body: formData(sf) }); toast('Settings saved.'); await boot(true); }); });
     const bf = $('#bf'); if (bf) bf.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', bf), async () => { await api('/admin/broadcast', { method: 'POST', body: formData(bf) }); toast('Notification sent.'); bf.reset(); }); });
   }
@@ -469,6 +482,7 @@
     erefund: (b) => { const note = prompt('Reason for refund:'); if (note !== null) busy(b, async () => { await api(`/escrows/${b.dataset.id}/refund`, { method: 'POST', body: { note } }); toast('Marked refunded.'); render(); }); },
     approve: (b) => busy(b, async () => { await api(`/admin/properties/${b.dataset.id}/approve`, { method: 'POST' }); toast('Approved and published.'); render(); }),
     reject: (b) => { const reason = prompt('Reason (sent to the agent):'); if (reason !== null) busy(b, async () => { await api(`/admin/properties/${b.dataset.id}/reject`, { method: 'POST', body: { reason } }); render(); }); },
+    pflag: (b) => busy(b, async () => { await api(`/admin/properties/${b.dataset.id}/flags`, { method: 'POST', body: { [b.dataset.k]: b.dataset.v === '1' } }); render(); }),
     closereq: (b) => busy(b, async () => { await api(`/requests/${b.dataset.id}/close`, { method: 'POST' }); render(); }),
   };
 
@@ -489,7 +503,9 @@
     document.title = `${S.cfg.site_name} — property made easy`;
     try {
       const m = path.match(/^\/p\/(\d+)$/);
-      if (m) await propertyPage(m[1]);
+      const ext = DG.routes.map(([re, fn]) => [path.match(re), fn]).find(([hit]) => hit);
+      if (ext) await ext[1](ext[0], q);
+      else if (m) await propertyPage(m[1]);
       else if (path === '/') await home();
       else if (path === '/listings') await listingsPage(q);
       else if (path === '/post') await postPage(q);
@@ -513,9 +529,10 @@
     const me = await api('/me');
     S.user = me.user; S.cfg = me.config;
     if (soft) return;
-    await refreshNotifs(); renderUser(); setupTranslate();
+    await refreshNotifs(); renderUser(); setupTranslate(); DG.onBoot.forEach((fn) => fn());
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     render();
   }
+  const DG = (window.DG = { $, app, S, e, money, price, currency, SYM, cap, date, mb, status, opts, api, toast, busy, formData, go, needLogin, modal, closeModal, cards, pcard, place, cleanQuery, STATES, render, vbadge, pay, ACTIONS, routes: [], dashTabs: {}, adminTabs: {}, onBoot: [] });
   boot().catch(() => (app.innerHTML = '<p class="pad center">Could not load the site. Please refresh.</p>'));
 })();

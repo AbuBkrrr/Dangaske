@@ -193,3 +193,72 @@ test('video upload is compressed in the background', { skip: !media.HAS_FFMPEG }
   assert.match(done.thumb, /\.webp$/);
   assert.deepEqual(fs.readdirSync(path.join(process.env.DATA_DIR, 'tmp')), []);
 });
+
+test('verification, flags, directory, reports, suspension, audit', async () => {
+  const p = await admin('POST', '/api/properties', { title: 'Flag house', price: 7000000, city: 'Kano', state: 'Kano', new_dev: true });
+  await admin('POST', `/api/properties/${p.body.id}/submit`);
+  assert.equal((await agent('POST', `/api/admin/properties/${p.body.id}/flags`, { verified: true })).status, 403);
+  const f = await admin('POST', `/api/admin/properties/${p.body.id}/flags`, { verified: true, featured: true });
+  assert.deepEqual([f.body.verified, f.body.featured, f.body.new_dev], [true, true, true]);
+  assert.equal((await anon('GET', '/api/properties?featured=1&verified=1&new_dev=1')).body.total, 1);
+  assert.ok((await anon('GET', '/api/markets')).body.featured.find((c) => c.city === 'Kano').n >= 1);
+
+  await agent('PATCH', '/api/me', { name: 'Ada', company: 'Ada Homes', account_type: 'agency', bio: 'We sell land' });
+  const dir = await anon('GET', '/api/agents?type=agency');
+  assert.equal(dir.body[0].name, 'Ada Homes');
+  assert.equal(dir.body[0].phone, undefined); // no contact leak around pay-to-view
+  assert.equal((await buyer('PATCH', '/api/me', { name: 'Bala', account_type: 'developer' })).body.user.account_type, 'individual');
+
+  const form = new FormData();
+  form.append('doc_type', 'NIN slip');
+  form.append('document', new Blob([await png(600, 400)], { type: 'image/png' }), 'id.png');
+  const k = await agent('POST', '/api/me/kyc', null, form);
+  assert.equal(k.body.user.kyc_status, 'pending');
+  const agentId = k.body.user.id;
+  assert.equal((await buyer('GET', `/api/admin/kyc/${agentId}/file`)).status, 403);
+  assert.equal(fs.readdirSync(path.join(process.env.DATA_DIR, 'kyc')).length, 1);
+  await admin('POST', `/api/admin/users/${agentId}/kyc`, { approve: true });
+  assert.equal((await anon('GET', `/api/agents/${agentId}`)).body.verified, true);
+
+  assert.equal((await anon('POST', '/api/reports', { kind: 'listing', property_id: p.body.id, message: 'short' })).status, 400);
+  assert.equal((await anon('POST', '/api/reports', { kind: 'listing', property_id: p.body.id, message: 'This listing looks fake to me' })).status, 201);
+  const slug = (await admin('POST', '/api/admin/posts', { title: 'Buying land safely', body: 'Check the title.', category: 'guide' })).body.slug;
+  assert.equal((await anon('GET', `/api/posts/${slug}`)).body.title, 'Buying land safely');
+  const t = await admin('GET', '/api/admin/trust');
+  assert.equal(t.body.reports[0].property_id, p.body.id);
+  assert.ok(t.body.audit.some((a) => a.action.includes('/flags')) && t.body.audit.some((a) => a.action === 'signup'));
+
+  const before = (await anon('GET', '/api/properties?type=land')).body.total;
+  await admin('POST', `/api/admin/users/${agentId}/suspend`, { suspended: true });
+  assert.equal((await agent('GET', '/api/my/properties')).status, 401); // signed out everywhere
+  assert.equal((await anon('GET', '/api/properties?type=land')).body.total, before - 1); // listings hidden
+  assert.equal((await anon('GET', `/api/agents/${agentId}`)).status, 404);
+  await admin('POST', `/api/admin/users/${agentId}/suspend`, { suspended: false });
+});
+
+test('SPV investment: KYC gate, units, funding, payouts', async () => {
+  const c = await admin('POST', '/api/admin/spvs', { title: 'Kano Terrace SPV', unit_price: 50000, total_units: 10, min_units: 2, projected_return_pct: 12, status: 'open' });
+  const id = c.body.id;
+  assert.equal((await buyer('POST', '/api/admin/spvs', { title: 'x', unit_price: 1, total_units: 1 })).status, 403);
+  assert.equal((await buyer('POST', `/api/spvs/${id}/invest`, { units: 2, accept_risk: true })).status, 403); // not KYC verified
+  const buyerId = db.prepare("SELECT id FROM users WHERE phone = '2348022222222'").get().id;
+  await admin('POST', `/api/admin/users/${buyerId}/kyc`, { approve: true });
+  assert.equal((await buyer('POST', `/api/spvs/${id}/invest`, { units: 1, accept_risk: true })).status, 400); // below minimum
+  assert.equal((await buyer('POST', `/api/spvs/${id}/invest`, { units: 4 })).status, 400); // risk notice
+  assert.equal((await buyer('POST', `/api/spvs/${id}/invest`, { units: 11, accept_risk: true })).status, 409);
+  const pay = await buyer('POST', `/api/spvs/${id}/invest`, { units: 4, accept_risk: true });
+  assert.equal((await anon('GET', `/api/spvs/${id}`)).body.sold_units, 0); // unpaid units are not counted
+  await buyer('POST', `/api/payments/demo/${pay.body.reference}`);
+  await buyer('POST', `/api/payments/demo/${pay.body.reference}`);
+  let s = (await buyer('GET', `/api/spvs/${id}`)).body;
+  assert.deepEqual([s.sold_units, s.raised, s.my_units, s.status], [4, 200000, 4, 'open']);
+  assert.equal((await admin('PUT', `/api/admin/spvs/${id}`, { title: 'Kano Terrace SPV', unit_price: 60000, total_units: 10, status: 'open' })).status, 409);
+  await admin('POST', `/api/admin/spvs/${id}/distribute`, { amount_per_unit: 1500, note: 'Q1 rent' });
+  const mine = (await buyer('GET', '/api/my/investments')).body;
+  assert.deepEqual([mine[0].units, mine[0].amount, mine[0].distributed], [4, 200000, 6000]);
+  const rest = await buyer('POST', `/api/spvs/${id}/invest`, { units: 6, accept_risk: true });
+  await buyer('POST', `/api/payments/demo/${rest.body.reference}`);
+  s = (await anon('GET', `/api/spvs/${id}`)).body;
+  assert.equal(s.status, 'funded');
+  assert.equal((await buyer('POST', `/api/spvs/${id}/invest`, { units: 2, accept_risk: true })).status, 409);
+});

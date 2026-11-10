@@ -38,6 +38,7 @@ function cleanFields(input, { partial = false } = {}) {
   set('contact_phone', str(input.contact_phone, 30));
   set('map_url', /^https:\/\//i.test(String(input.map_url || '')) ? str(input.map_url, 300) : '');
   set('easy_buy', input.easy_buy === true || /^(1|true|yes|y)$/i.test(String(input.easy_buy)) ? 1 : 0);
+  set('new_dev', input.new_dev === true || /^(1|true|yes|y)$/i.test(String(input.new_dev)) ? 1 : 0);
   if (has('unlock_fee')) out.unlock_fee = input.unlock_fee === '' ? null : int(input.unlock_fee, 1e7);
   return out;
 }
@@ -84,6 +85,12 @@ const mediaUrl = (file) => (file ? `/media/${file}` : '');
  * gallery, documents and contact details are only included for viewers who paid to unlock
  * (or the owner / an admin, or when the fee is zero).
  */
+function agentOf(p) {
+  const u = db.prepare('SELECT id, name, company, role, account_type, verified FROM users WHERE id = ?').get(p.owner_id);
+  if (!u) return null;
+  return { id: u.id, name: u.company || u.name || (u.role === 'admin' ? config.COMPANY : 'Agent'), type: u.account_type, verified: Boolean(u.verified) || u.role === 'admin' };
+}
+
 function present(p, user) {
   const fee = unlockFee(p);
   const manage = canManage(user, p);
@@ -97,6 +104,7 @@ function present(p, user) {
     state: p.state, city: p.city, area: p.area,
     bedrooms: p.bedrooms, bathrooms: p.bathrooms, size_sqm: p.size_sqm,
     easy_buy: Boolean(p.easy_buy), status: p.status,
+    verified: Boolean(p.verified), featured: Boolean(p.featured), new_dev: Boolean(p.new_dev), agent: agentOf(p),
     created_at: p.created_at, published_at: p.published_at, sold_at: p.sold_at,
     cover: cover ? mediaUrl(cover.file) : '', cover_thumb: cover ? mediaUrl(cover.thumb) : '',
     image_count: counts.images || 0, video_count: counts.videos || 0,
@@ -121,7 +129,7 @@ function present(p, user) {
 }
 
 function search(q, user) {
-  const where = ["status IN ('active','sold')"];
+  const where = ["status IN ('active','sold')", 'owner_id NOT IN (SELECT id FROM users WHERE suspended = 1)'];
   const args = [];
   const add = (sql, ...a) => { where.push(sql); args.push(...a); };
   if (q.q) {
@@ -135,8 +143,13 @@ function search(q, user) {
   if (int(q.max)) add('price <= ?', int(q.max));
   if (int(q.beds)) add('bedrooms >= ?', int(q.beds, 50));
   if (q.easy === '1') add('easy_buy = 1');
+  if (q.new_dev === '1') add('new_dev = 1');
+  if (q.featured === '1') add('featured = 1');
+  if (q.verified === '1') add('verified = 1');
+  if (q.city) add('city = ? COLLATE NOCASE', String(q.city));
+  if (int(q.owner)) add('owner_id = ?', int(q.owner));
   if (q.available === '1') add("status = 'active'");
-  const order = { price_asc: 'price ASC', price_desc: 'price DESC' }[q.sort] || "status = 'sold', published_at DESC, id DESC";
+  const order = { price_asc: 'price ASC', price_desc: 'price DESC' }[q.sort] || "status = 'sold', featured DESC, published_at DESC, id DESC";
   const limit = Math.min(int(q.limit) || 12, 48);
   const page = Math.max(int(q.page) || 1, 1);
   const total = db.prepare(`SELECT COUNT(*) AS n FROM properties WHERE ${where.join(' AND ')}`).get(...args).n;

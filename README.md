@@ -19,6 +19,22 @@ The site name is set with `SITE_NAME` in `.env`, so it can be changed in one pla
 | Translation | Language menu (English, Hausa, Yorùbá, Igbo, Arabic, French) powered by Google Translate. |
 | Property requests | Buyers/agents submit a specification; agents and admins are alerted and requesters are notified when a matching listing goes live. |
 
+### Trust, discovery and investment
+
+| Feature | How it works |
+| --- | --- |
+| Verified listings and professionals | Admin marks listings verified/featured; agents, agencies and developers submit an ID (KYC) and get a badge once approved. ID files are stored privately in `data/kyc`. |
+| SPV property investment | Admin creates an offer (unit price, units, term, projected return). KYC-verified members buy units, see a portfolio, and receive recorded payouts per unit. |
+| Directory and services | Public profiles for agents, agencies, developers and service providers, with their live listings. |
+| Markets and new developments | City pages with live counts; off-plan / development projects section. |
+| Trust centre | Explains checks and badges; anyone can report a listing or security issue. Reports land in Admin → Reports with risk counters. |
+| Audit trail and suspension | Sign-ins, listing/escrow actions and every admin action are logged; admins can suspend an account, which signs it out and hides its listings. |
+| Multi-currency display | Visitors can view prices in USD/GBP/AED using rates set in Admin → Settings (payments stay in naira). |
+| Articles | Insights, guides, newsroom and careers are written in Admin → Articles. |
+| Extras | Ctrl/⌘K search, floating WhatsApp chat button, installable app (PWA), read-only public API (`/developers`), About / Contact / Terms / Privacy pages. |
+
+> **Before opening an SPV offer to the public**, have the structure and offer documents reviewed by a lawyer; public investment offers are regulated (SEC Nigeria). The Terms and Privacy pages are starting templates and also need legal review.
+
 ## Run it
 
 Requires Node.js 20.12+ (and `ffmpeg` for video compression).
