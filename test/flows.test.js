@@ -174,3 +174,22 @@ test('share pages carry preview tags; push + admin', async () => {
   assert.ok(o.body.stats.storage_saved > 0);
   assert.equal((await admin('PUT', '/api/admin/settings', { default_unlock_fee: 0 })).body.default_unlock_fee, '0');
 });
+
+test('video upload is compressed in the background', { skip: !media.HAS_FFMPEG }, async () => {
+  const { execFileSync } = require('child_process');
+  const src = path.join(process.env.DATA_DIR, 'tmp', 'clip.mp4');
+  execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=1920x1080:rate=30:duration=3', '-c:v', 'libx264', '-crf', '10', '-pix_fmt', 'yuv420p', src]);
+  const orig = fs.statSync(src).size;
+  const p = await admin('POST', '/api/properties', { title: 'Video house', price: 9000000 });
+  const form = new FormData();
+  form.append('files', new Blob([fs.readFileSync(src)], { type: 'video/mp4' }), 'clip.mp4');
+  fs.unlinkSync(src);
+  const up = await admin('POST', `/api/properties/${p.body.id}/media`, null, form);
+  assert.equal(up.body.media[0].status, 'processing');
+  await media.whenIdle();
+  const done = (await admin('GET', `/api/properties/${p.body.id}`)).body.media[0];
+  assert.equal(done.status, 'ready');
+  assert.ok(done.bytes < orig / 2, `video should shrink (${orig} -> ${done.bytes})`);
+  assert.match(done.thumb, /\.webp$/);
+  assert.deepEqual(fs.readdirSync(path.join(process.env.DATA_DIR, 'tmp')), []);
+});
