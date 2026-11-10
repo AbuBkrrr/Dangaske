@@ -1,0 +1,200 @@
+const path = require('path');
+const Database = require('better-sqlite3');
+const config = require('./config');
+
+const db = new Database(path.join(config.DATA_DIR, 'dangida.sqlite'));
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY,
+  phone TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL DEFAULT 'buyer',          -- buyer | agent | admin
+  notif_seen_at TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS otps (
+  phone TEXT PRIMARY KEY,
+  code_hash TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  sent_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS properties (
+  id INTEGER PRIMARY KEY,
+  owner_id INTEGER NOT NULL REFERENCES users(id),
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  purpose TEXT NOT NULL DEFAULT 'sale',        -- sale | rent | shortlet
+  type TEXT NOT NULL DEFAULT 'house',          -- house | apartment | land | commercial | duplex | bungalow
+  price INTEGER NOT NULL DEFAULT 0,            -- naira
+  state TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL DEFAULT '',
+  area TEXT NOT NULL DEFAULT '',
+  address TEXT NOT NULL DEFAULT '',
+  bedrooms INTEGER NOT NULL DEFAULT 0,
+  bathrooms INTEGER NOT NULL DEFAULT 0,
+  size_sqm INTEGER NOT NULL DEFAULT 0,
+  features TEXT NOT NULL DEFAULT '',           -- comma separated
+  title_doc TEXT NOT NULL DEFAULT '',          -- C of O, R of O, Deed ...
+  contact_phone TEXT NOT NULL DEFAULT '',
+  map_url TEXT NOT NULL DEFAULT '',
+  unlock_fee INTEGER,                          -- NULL = site default
+  easy_buy INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'draft',        -- draft | pending | active | sold | rejected
+  cover_media_id INTEGER,
+  source TEXT NOT NULL DEFAULT 'web',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  published_at TEXT,
+  sold_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_prop_status ON properties(status, published_at);
+CREATE TABLE IF NOT EXISTS media (
+  id INTEGER PRIMARY KEY,
+  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,                          -- image | video
+  file TEXT NOT NULL DEFAULT '',
+  thumb TEXT NOT NULL DEFAULT '',
+  bytes INTEGER NOT NULL DEFAULT 0,
+  orig_bytes INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'ready',        -- ready | processing | failed
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_media_prop ON media(property_id);
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY,
+  reference TEXT NOT NULL UNIQUE,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  purpose TEXT NOT NULL,                       -- unlock | escrow | installment
+  target_id INTEGER NOT NULL,
+  amount INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',      -- pending | paid | failed
+  provider TEXT NOT NULL DEFAULT 'paystack',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  paid_at TEXT
+);
+CREATE TABLE IF NOT EXISTS unlocks (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  payment_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, property_id)
+);
+CREATE TABLE IF NOT EXISTS plans (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  months INTEGER NOT NULL,
+  deposit_pct REAL NOT NULL,
+  markup_pct REAL NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  property_id INTEGER NOT NULL REFERENCES properties(id),
+  plan_id INTEGER NOT NULL REFERENCES plans(id),
+  plan_name TEXT NOT NULL,
+  total INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',      -- pending | active | completed | cancelled
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS installments (
+  id INTEGER PRIMARY KEY,
+  subscription_id INTEGER NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,                        -- 0 = deposit
+  due_date TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'due',          -- due | paid
+  paid_at TEXT
+);
+CREATE TABLE IF NOT EXISTS escrows (
+  id INTEGER PRIMARY KEY,
+  property_id INTEGER NOT NULL REFERENCES properties(id),
+  buyer_id INTEGER NOT NULL REFERENCES users(id),
+  seller_id INTEGER NOT NULL REFERENCES users(id),
+  amount INTEGER NOT NULL,
+  fee INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'awaiting_payment', -- awaiting_payment | funded | released | disputed | refunded | cancelled
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS escrow_events (
+  id INTEGER PRIMARY KEY,
+  escrow_id INTEGER NOT NULL REFERENCES escrows(id) ON DELETE CASCADE,
+  actor_id INTEGER,
+  event TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS requests (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  purpose TEXT NOT NULL DEFAULT 'sale',
+  type TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL DEFAULT '',
+  min_price INTEGER NOT NULL DEFAULT 0,
+  max_price INTEGER NOT NULL DEFAULT 0,
+  bedrooms INTEGER NOT NULL DEFAULT 0,
+  details TEXT NOT NULL DEFAULT '',
+  contact_phone TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open',         -- open | closed
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS push_subs (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL UNIQUE,
+  sub TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER,                             -- NULL = all members
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  url TEXT NOT NULL DEFAULT '/',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS wa_state (
+  phone TEXT PRIMARY KEY,
+  draft_id INTEGER,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS wa_seen (id TEXT PRIMARY KEY, at INTEGER NOT NULL);
+`);
+
+const DEFAULT_SETTINGS = {
+  default_unlock_fee: '1000', // naira charged to view full details of a listing
+  escrow_fee_pct: '1.5',
+  support_whatsapp: '',
+};
+
+const getSetting = (key) => {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  return row ? row.value : DEFAULT_SETTINGS[key] ?? null;
+};
+const setSetting = (key, value) =>
+  db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, String(value));
+const allSettings = () => {
+  const out = { ...DEFAULT_SETTINGS };
+  for (const k of Object.keys(DEFAULT_SETTINGS)) out[k] = getSetting(k);
+  return out;
+};
+
+if (!db.prepare('SELECT 1 FROM plans LIMIT 1').get()) {
+  const ins = db.prepare('INSERT INTO plans(name, months, deposit_pct, markup_pct) VALUES(?,?,?,?)');
+  ins.run('Quick 6', 6, 40, 0);
+  ins.run('Steady 12', 12, 30, 5);
+  ins.run('Flexi 24', 24, 20, 12);
+}
+
+module.exports = { db, getSetting, setSetting, allSettings, DEFAULT_SETTINGS };

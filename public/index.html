@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!--META-->
+  <meta name="theme-color" content="#0f3d2e">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-in">
+      <a class="brand" href="/" data-link>
+        <img src="/icon.svg" alt="" width="34" height="34">
+        <span class="notranslate">%SITE_NAME%</span>
+      </a>
+      <button class="burger" id="burger" aria-label="Menu" aria-expanded="false">☰</button>
+      <nav class="nav" id="nav">
+        <a href="/listings?purpose=sale" data-link>Buy</a>
+        <a href="/listings?purpose=rent" data-link>Rent</a>
+        <a href="/easy-buy" data-link>Easy-Buy</a>
+        <a href="/escrow" data-link>Escrow</a>
+        <a href="/requests" data-link>Requests</a>
+        <select id="lang" class="lang notranslate" aria-label="Language">
+          <option value="en">English</option>
+          <option value="ha">Hausa</option>
+          <option value="yo">Yorùbá</option>
+          <option value="ig">Igbo</option>
+          <option value="ar">العربية</option>
+          <option value="fr">Français</option>
+        </select>
+        <span id="userbox" class="userbox"></span>
+      </nav>
+    </div>
+  </header>
+
+  <main id="app" class="wrap"><p class="muted pad">Loading…</p></main>
+
+  <footer class="foot">
+    <div class="wrap foot-in">
+      <div>
+        <strong class="notranslate">%SITE_NAME%</strong>
+        <p>A service of <span class="notranslate">%COMPANY%</span>.</p>
+      </div>
+      <nav>
+        <a href="/listings" data-link>All properties</a>
+        <a href="/easy-buy" data-link>Easy-buy plans</a>
+        <a href="/escrow" data-link>How escrow works</a>
+        <a href="/request" data-link>Request a property</a>
+      </nav>
+    </div>
+  </footer>
+
+  <div id="modal" class="modal" hidden></div>
+  <div id="toast" class="toast" hidden role="status"></div>
+  <div id="gt-el" hidden></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
