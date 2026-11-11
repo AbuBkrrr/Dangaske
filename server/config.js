@@ -35,6 +35,9 @@ const config = {
   VAPID_PRIVATE_KEY: env.VAPID_PRIVATE_KEY || '',
   VAPID_SUBJECT: env.VAPID_SUBJECT || 'mailto:admin@example.com',
 
+  ANDROID_PACKAGE: env.ANDROID_PACKAGE || '',
+  ANDROID_SHA256: (env.ANDROID_SHA256 || '').split(',').map((x) => x.trim()).filter(Boolean),
+
   FB_PAGE_ID: env.FB_PAGE_ID || '',
   FB_PAGE_TOKEN: env.FB_PAGE_TOKEN || '',
   TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN || '',

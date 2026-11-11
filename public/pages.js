@@ -101,7 +101,8 @@
     app.innerHTML = `<div class="card" style="margin-top:28px"><div class="row"><div class="avatar notranslate">${e(p.name[0].toUpperCase())}</div><div><h1 style="margin:0;font-size:1.7rem">${e(p.name)} ${p.verified ? vbadge : ''}</h1>
       <span class="muted">${e(TYPE[p.type] || 'Agent')}${p.person ? ' · ' + e(p.person) : ''}${p.city ? ' · ' + e(p.city) : ''} · Member since ${date(p.since)}</span></div></div>
       ${p.bio ? `<p class="prose">${e(p.bio)}</p>` : ''}<p class="small muted">Contact details are shared on each listing once unlocked. ${p.verified ? '' : 'This profile has not completed verification.'}</p></div>
-      <section><h2>Listings</h2>${cards(p.properties, 'No live listings.')}</section>`;
+      <section><h2>Listings</h2>${cards(p.properties, 'No live listings.')}</section><section id="rev"></section>`;
+    if (DG.agentExtras) DG.agentExtras(p);
   });
   route(/^\/services$/, async () => {
     const [rows, mt] = await Promise.all([api('/agents?type=service'), meta()]);
@@ -134,7 +135,7 @@
       ${s.summary ? `<p><b>${e(s.summary)}</b></p>` : ''}<p class="prose">${e(s.description)}</p>
       ${s.property_id ? `<p><a href="/p/${s.property_id}" data-link>View the underlying property →</a></p>` : ''}
       ${s.distributions.length ? `<h3>Payout history</h3><div class="tablewrap"><table><tr><th>Date</th><th>Per unit</th><th>Note</th></tr>${s.distributions.map((d) => `<tr><td>${date(d.created_at)}</td><td class="notranslate">${money(d.amount_per_unit)}</td><td>${e(d.note)}</td></tr>`).join('')}</table></div>` : ''}
-      <div style="margin-top:18px">${RISK}</div></div>
+      <div id="mkt"></div><div style="margin-top:18px">${RISK}</div></div>
     <aside class="side"><div class="card"><h3>${e(cap(s.status))}</h3><div class="bar"><i style="width:${pct(s)}%"></i></div>
       <p class="small notranslate"><b>${money(s.raised)}</b> raised of ${money(s.target)}<br>${left.toLocaleString()} of ${s.total_units.toLocaleString()} units left</p>
       ${s.my_units ? `<p class="chip ok">You hold ${s.my_units} unit${s.my_units > 1 ? 's' : ''}</p>` : ''}
@@ -142,6 +143,7 @@
         <p class="small">Total: <b class="notranslate" id="tot">${money(Math.min(s.min_units, left) * s.unit_price)}</b></p>
         <label class="check small"><input type="checkbox" name="accept_risk" required> I have read the risk notice and offer details.</label>
         <button class="btn gold block">Invest now</button></form>` : '<p class="muted">This offer is not open for new investment.</p>'}</div></aside></div>`;
+    if (DG.spvExtras) DG.spvExtras(s);
     const f = $('#inv'); if (!f) return;
     f.units.addEventListener('input', () => ($('#tot').textContent = money((Number(f.units.value) || 0) * s.unit_price)));
     f.addEventListener('submit', (ev) => {

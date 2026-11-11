@@ -262,3 +262,103 @@ test('SPV investment: KYC gate, units, funding, payouts', async () => {
   assert.equal(s.status, 'funded');
   assert.equal((await buyer('POST', `/api/spvs/${id}/invest`, { units: 2, accept_risk: true })).status, 409);
 });
+
+test('customer experience: paid inspection, chat, saved search, receipts, reviews, credit, reminders', async () => {
+  const experience = require('../server/experience');
+  const cust = client();
+  await login(agent, '08033333333'); // signed out by the suspension test
+  await admin('PUT', '/api/admin/settings', { default_unlock_fee: 1000 }); // an earlier test made viewing free
+  const me = await login(cust, '08055555555', { name: 'Chidi Buyer', ref: experience.refCode(db.prepare("SELECT id FROM users WHERE phone = '2348033333333'").get().id) });
+  assert.equal((await agent('GET', '/api/my/referrals')).body.referred[0].name, 'Chidi');
+
+  await cust('POST', '/api/saved-searches', { name: 'Kano land', query: { type: 'land', state: 'Kano', max: '9000000' } });
+  const p = await agent('POST', '/api/properties', { title: 'Saved-search plot', price: 8000000, type: 'land', state: 'Kano', city: 'Kano', address: '9 Hidden Close', lat: 12.00234, lng: 8.59123, nearby: 'School, market' });
+  const pid = p.body.id;
+  await agent('POST', `/api/properties/${pid}/submit`);
+  await admin('POST', `/api/admin/properties/${pid}/approve`);
+  assert.ok((await cust('GET', '/api/notifications')).body.items.some((n) => n.title === 'New match: Kano land'));
+  const teaser = (await cust('GET', `/api/properties/${pid}`)).body;
+  assert.deepEqual([teaser.locked, teaser.lat, teaser.approx[0], teaser.nearby], [true, undefined, 12, 'School, market']); // exact pin hidden
+  assert.equal((await cust('POST', `/api/properties/${pid}/favourite`)).body.fav, true);
+  assert.equal((await cust('GET', '/api/my/favourites')).body.length, 1);
+
+  assert.equal((await cust('POST', `/api/properties/${pid}/chat`)).status, 403); // locked listing: no chat
+  const slot = new Date(Date.now() + 20 * 3600 * 1000); slot.setHours(10, 0, 0, 0); if (slot.getTime() < Date.now() + 3 * 3600 * 1000) slot.setDate(slot.getDate() + 1);
+  const iso = new Date(slot.getTime() - slot.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  assert.equal((await cust('POST', `/api/properties/${pid}/inspections`, { slot: '2020-01-01T10:00' })).status, 400);
+  const book = await cust('POST', `/api/properties/${pid}/inspections`, { slot: iso, note: 'Coming with my surveyor' });
+  assert.match(book.body.url, /pay\/demo/);
+  assert.equal((await agent('GET', '/api/my/inspections')).body.length, 0); // agent is not bothered until the fee is paid
+  await cust('POST', `/api/payments/demo/${book.body.reference}`);
+  const mineI = (await agent('GET', '/api/my/inspections')).body;
+  assert.deepEqual([mineI[0].status, mineI[0].fee, mineI[0].role], ['confirmed', 5000, 'agent']);
+  assert.equal((await cust('GET', `/api/properties/${pid}`)).body.address, '9 Hidden Close'); // paying to inspect unlocks details
+  assert.equal((await buyer('POST', `/api/properties/${pid}/inspections`, { slot: iso })).status, 409); // slot taken
+  assert.equal((await cust('POST', `/api/inspections/${mineI[0].id}/status`, { status: 'completed' })).status, 403);
+
+  const th = (await cust('POST', `/api/properties/${pid}/chat`)).body.id;
+  await cust('POST', `/api/threads/${th}/messages`, { body: 'Is the price negotiable?' });
+  assert.equal((await buyer('GET', `/api/threads/${th}`)).status, 404); // private
+  assert.equal((await agent('GET', '/api/my/threads')).body[0].unread, true);
+  assert.equal((await agent('GET', `/api/threads/${th}`)).body.messages[0].body, 'Is the price negotiable?');
+  assert.equal((await agent('GET', '/api/my/threads')).body[0].unread, false);
+
+  db.prepare('UPDATE inspections SET slot = ? WHERE id = ?').run(iso, mineI[0].id);
+  assert.equal(experience.remind().inspections, slot.getTime() - Date.now() <= 24 * 3600 * 1000 ? 1 : 0);
+  await agent('POST', `/api/inspections/${mineI[0].id}/status`, { status: 'completed' });
+  const agentId = mineI[0].agent_id;
+  assert.equal((await buyer('POST', `/api/agents/${agentId}/reviews`, { property_id: pid, rating: 5 })).status, 403); // no transaction
+  assert.equal((await cust('POST', `/api/agents/${agentId}/reviews`, { property_id: pid, rating: 4, comment: 'Punctual' })).status, 201);
+  assert.equal((await cust('POST', `/api/agents/${agentId}/reviews`, { property_id: pid, rating: 1 })).status, 403); // once only
+  assert.deepEqual([(await anon('GET', `/api/agents/${agentId}/reviews`)).body.avg, (await anon('GET', `/api/properties/${pid}`)).body.agent.rating], [4, 4]);
+
+  const e = (await cust('POST', `/api/properties/${pid}/escrow`, {})).body;
+  assert.equal(e.credit, 5000); // inspection fee credited to the purchase
+  const pay = await cust('POST', `/api/escrows/${e.id}/pay`);
+  assert.equal(db.prepare('SELECT amount FROM payments WHERE reference = ?').get(pay.body.reference).amount, 8000000 + 120000 - 5000);
+
+  const tc = await cust('POST', `/api/properties/${pid}/title-check`);
+  await cust('POST', `/api/payments/demo/${tc.body.reference}`);
+  const tid = (await cust('GET', '/api/my/title-checks')).body[0].id;
+  await admin('POST', `/api/admin/title-checks/${tid}/complete`, { result: 'Searched at the registry: title is clean, no encumbrance.' });
+  assert.match((await cust('GET', '/api/my/title-checks')).body[0].result, /clean/);
+
+  const pays = (await cust('GET', '/api/my/payments')).body;
+  assert.deepEqual(pays.map((x) => x.label).sort(), ['Inspection fee', 'Title verification report']);
+  const rc = await cust('GET', `/api/payments/${pays[0].reference}/receipt`);
+  assert.match(rc.body, /PAID/);
+  assert.equal((await buyer('GET', `/api/payments/${pays[0].reference}/receipt`)).status, 404);
+
+  const form = new FormData(); form.append('title', 'Offer letter'); form.append('user_id', String(me.id));
+  form.append('file', new Blob([await png(300, 300)], { type: 'image/png' }), 'offer.png');
+  assert.equal((await admin('POST', '/api/documents', null, form)).status, 201);
+  const doc = (await cust('GET', '/api/my/documents')).body[0];
+  assert.equal(doc.title, 'Offer letter');
+  assert.equal((await buyer('GET', `/api/documents/${doc.id}/file`)).status, 404);
+  assert.equal((await cust('DELETE', `/api/documents/${doc.id}`)).status, 403); // company documents stay
+
+  const sub = db.prepare("SELECT s.id FROM subscriptions s WHERE s.status = 'active'").get();
+  db.prepare("UPDATE installments SET due_date = date('now', '+1 day') WHERE subscription_id = ? AND seq = 1").run(sub.id);
+  assert.equal(experience.remind().instalments, 1);
+  assert.equal(experience.remind().instalments, 0); // not nagged twice
+  const desk = (await admin('GET', '/api/admin/desk')).body;
+  assert.ok(desk.inspections.length >= 1 && desk.referrals.length === 1 && desk.fees.collected === 5000);
+});
+
+test('SPV unit resale between verified members', async () => {
+  const s = db.prepare("SELECT id FROM spvs WHERE status = 'funded'").get().id; // buyer holds all 10 units
+  assert.equal((await buyer('POST', `/api/spvs/${s}/market`, { units: 3, price_per_unit: 55000 })).status, 404); // off by default
+  await admin('PUT', '/api/admin/settings', { secondary_market: '1' });
+  assert.equal((await buyer('POST', `/api/spvs/${s}/market`, { units: 11, price_per_unit: 55000 })).status, 409);
+  assert.equal((await buyer('POST', `/api/spvs/${s}/market`, { units: 3, price_per_unit: 55000 })).status, 201);
+  assert.equal((await buyer('POST', `/api/spvs/${s}/market`, { units: 8, price_per_unit: 55000 })).status, 409); // 3 already on offer
+  const l = (await agent('GET', `/api/spvs/${s}/market`)).body.listings[0];
+  assert.equal((await buyer('POST', `/api/unit-listings/${l.id}/buy`, { accept_risk: true })).status, 400); // own units
+  const pay = await agent('POST', `/api/unit-listings/${l.id}/buy`, { accept_risk: true }); // agent was KYC-approved earlier
+  assert.equal(pay.status, 200, JSON.stringify(pay.body));
+  await agent('POST', `/api/payments/demo/${pay.body.reference}`);
+  assert.equal((await agent('GET', '/api/my/investments')).body[0].units, 3);
+  assert.equal((await buyer('GET', '/api/my/investments')).body[0].units, 7);
+  const spv = (await anon('GET', `/api/spvs/${s}`)).body;
+  assert.deepEqual([spv.sold_units, spv.investors], [10, 2]); // total unchanged
+});

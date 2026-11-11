@@ -6,6 +6,7 @@ const media = require('./media');
 const push = require('./push');
 const social = require('./social');
 
+const hooks = { onPublish: [] };
 const PURPOSES = ['sale', 'rent', 'shortlet'];
 const TYPES = ['house', 'duplex', 'bungalow', 'apartment', 'land', 'commercial'];
 
@@ -38,6 +39,11 @@ function cleanFields(input, { partial = false } = {}) {
   set('contact_phone', str(input.contact_phone, 30));
   set('map_url', /^https:\/\//i.test(String(input.map_url || '')) ? str(input.map_url, 300) : '');
   set('easy_buy', input.easy_buy === true || /^(1|true|yes|y)$/i.test(String(input.easy_buy)) ? 1 : 0);
+  set('nearby', str(input.nearby, 300));
+  set('tour_url', /^https:\/\//i.test(String(input.tour_url || '')) ? str(input.tour_url, 300) : '');
+  for (const [k, lim] of [['lat', 90], ['lng', 180]]) {
+    if (has(k)) { const n = Number(input[k]); out[k] = input[k] !== '' && Number.isFinite(n) && Math.abs(n) <= lim ? n : null; }
+  }
   set('new_dev', input.new_dev === true || /^(1|true|yes|y)$/i.test(String(input.new_dev)) ? 1 : 0);
   if (has('unlock_fee')) out.unlock_fee = input.unlock_fee === '' ? null : int(input.unlock_fee, 1e7);
   return out;
@@ -88,7 +94,8 @@ const mediaUrl = (file) => (file ? `/media/${file}` : '');
 function agentOf(p) {
   const u = db.prepare('SELECT id, name, company, role, account_type, verified FROM users WHERE id = ?').get(p.owner_id);
   if (!u) return null;
-  return { id: u.id, name: u.company || u.name || (u.role === 'admin' ? config.COMPANY : 'Agent'), type: u.account_type, verified: Boolean(u.verified) || u.role === 'admin' };
+  const r = db.prepare('SELECT ROUND(AVG(rating), 1) AS avg, COUNT(*) AS n FROM reviews WHERE agent_id = ?').get(u.id);
+  return { id: u.id, name: u.company || u.name || (u.role === 'admin' ? config.COMPANY : 'Agent'), type: u.account_type, verified: Boolean(u.verified) || u.role === 'admin', rating: r.avg, reviews: r.n };
 }
 
 function present(p, user) {
@@ -104,6 +111,10 @@ function present(p, user) {
     state: p.state, city: p.city, area: p.area,
     bedrooms: p.bedrooms, bathrooms: p.bathrooms, size_sqm: p.size_sqm,
     easy_buy: Boolean(p.easy_buy), status: p.status,
+    nearby: p.nearby, has_tour: Boolean(p.tour_url),
+    // Public map position is rounded (about 1 km) so the exact location stays behind the unlock.
+    approx: p.lat != null && p.lng != null ? [Math.round(p.lat * 100) / 100, Math.round(p.lng * 100) / 100] : null,
+    fav: Boolean(user && db.prepare('SELECT 1 FROM favourites WHERE user_id = ? AND property_id = ?').get(user.id, p.id)),
     verified: Boolean(p.verified), featured: Boolean(p.featured), new_dev: Boolean(p.new_dev), agent: agentOf(p),
     created_at: p.created_at, published_at: p.published_at, sold_at: p.sold_at,
     cover: cover ? mediaUrl(cover.file) : '', cover_thumb: cover ? mediaUrl(cover.thumb) : '',
@@ -115,7 +126,7 @@ function present(p, user) {
     const owner = db.prepare('SELECT name, role FROM users WHERE id = ?').get(p.owner_id);
     Object.assign(out, {
       description: p.description, address: p.address, features: p.features, title_doc: p.title_doc,
-      contact_phone: p.contact_phone, map_url: p.map_url,
+      contact_phone: p.contact_phone, map_url: p.map_url, lat: p.lat, lng: p.lng, tour_url: p.tour_url,
       listed_by: owner ? owner.name || (owner.role === 'admin' ? config.COMPANY : 'Agent') : '',
       media: db.prepare('SELECT * FROM media WHERE property_id = ? ORDER BY id').all(p.id).map((m) => ({
         id: m.id, kind: m.kind, status: m.status, url: mediaUrl(m.file), thumb: mediaUrl(m.thumb),
@@ -169,6 +180,7 @@ function publish(p) {
   p = getProperty(p.id);
   const headline = `${p.title} — ${naira(p.price)}`;
   push.notify({ title: 'New listing', body: `${headline}${place(p) ? ' · ' + place(p) : ''}`, url: propertyUrl(p) });
+  for (const fn of hooks.onPublish) { try { fn(p); } catch (e) { console.error('publish hook failed:', e.message); } }
   social.autoPost(p).catch((e) => console.error('Social auto-post failed:', e.message));
 
   const matches = db
@@ -221,7 +233,7 @@ function removeProperty(p) {
 }
 
 module.exports = {
-  PURPOSES, TYPES, int, str, naira, place, propertyUrl,
+  hooks, PURPOSES, TYPES, int, str, naira, place, propertyUrl,
   createProperty, updateProperty, getProperty, mustGet, canManage, unlockFee, hasUnlocked,
   present, search, publish, submit, markSold, removeProperty,
 };

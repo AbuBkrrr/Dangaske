@@ -85,7 +85,7 @@
     $('#f2', m).addEventListener('submit', (ev) => {
       ev.preventDefault();
       busy($('button.btn', ev.target), async () => {
-        const out = await api('/auth/verify', { method: 'POST', body: { phone: r.phone, ...formData(ev.target) } });
+        const out = await api('/auth/verify', { method: 'POST', body: { phone: r.phone, ref: DG.ref ? DG.ref() : '', ...formData(ev.target) } });
         S.user = out.user; closeModal(); toast(`Welcome${S.user.name ? ', ' + S.user.name : ''}!`);
         await refreshNotifs(); renderUser();
         if (r.is_new) offerPush();
@@ -160,7 +160,7 @@
   const specs = (p) => [p.bedrooms && `${p.bedrooms} bed`, p.bathrooms && `${p.bathrooms} bath`, p.size_sqm && `${Number(p.size_sqm).toLocaleString()} m²`, cap(p.type)].filter(Boolean).map((x) => `<span>${e(x)}</span>`).join('');
   const pcard = (p) => `<a class="pcard ${p.status === 'sold' ? 'sold' : ''}" href="/p/${p.id}" data-link>
     <div class="pimg">${p.cover_thumb ? `<img src="${e(p.cover_thumb)}" alt="" loading="lazy">` : ''}
-      <div class="tags">${p.status === 'sold' ? '<span class="tag red">Sold</span>' : `<span class="tag">For ${e(p.purpose)}</span>`}${p.easy_buy && p.status !== 'sold' ? '<span class="tag gold">Easy-buy</span>' : ''}${p.new_dev ? '<span class="tag blue">New development</span>' : ''}${!['active', 'sold'].includes(p.status) ? `<span class="tag grey">${e(p.status)}</span>` : ''}</div>${p.verified ? '<span class="vtag">✔ Verified</span>' : ''}</div>
+      <div class="tags">${p.status === 'sold' ? '<span class="tag red">Sold</span>' : `<span class="tag">For ${e(p.purpose)}</span>`}${p.easy_buy && p.status !== 'sold' ? '<span class="tag gold">Easy-buy</span>' : ''}${p.new_dev ? '<span class="tag blue">New development</span>' : ''}${!['active', 'sold'].includes(p.status) ? `<span class="tag grey">${e(p.status)}</span>` : ''}</div>${p.verified ? '<span class="vtag">✔ Verified</span>' : ''}<span class="cardacts"><button data-act="fav" data-id="${p.id}" aria-label="Save" title="Save">${p.fav ? '♥' : '♡'}</button><button data-act="cmp" data-id="${p.id}" aria-label="Compare" title="Compare">⇄</button></span></div>
     <div class="pbody"><div class="price notranslate">${price(p.price)}${p.purpose === 'rent' ? '<small> /yr</small>' : ''}</div>
       <div class="ptitle">${e(p.title)}</div><div class="ploc">${e(place(p))}</div><div class="specs">${specs(p)}</div></div></a>`;
   const cards = (items, empty) => (items.length ? `<div class="cards">${items.map(pcard).join('')}</div>` : `<p class="muted pad center">${e(empty)}</p>`);
@@ -219,7 +219,7 @@
         <label class="check"><input type="checkbox" name="verified" value="1"${f.verified ? ' checked' : ''}> Verified only</label>
         <label class="check"><input type="checkbox" name="new_dev" value="1"${f.new_dev ? ' checked' : ''}> New developments</label>
         <select name="sort" aria-label="Sort">${opts([['', 'Newest'], ['price_asc', 'Price: low to high'], ['price_desc', 'Price: high to low']], f.sort)}</select></form>
-      <p class="muted">${data.total} ${data.total === 1 ? 'property' : 'properties'} found</p>
+      <div class="spread"><p class="muted">${data.total} ${data.total === 1 ? 'property' : 'properties'} found</p><div class="row"><button class="btn sm ghost" data-act="savesearch">🔔 Save this search</button><a class="btn sm ghost" href="/map" data-link>Map view</a><a class="btn sm ghost" href="/compare" data-link>Compare</a></div></div>
       ${cards(data.items, 'Nothing matches those filters yet. Try widening your search or send us a request.')}
       ${data.pages > 1 ? `<div class="pager">${data.page > 1 ? `<a class="btn ghost sm" data-link href="/listings?${cleanQuery({ ...f, page: data.page - 1 })}">← Prev</a>` : ''}<span>Page ${data.page} of ${data.pages}</span>${data.page < data.pages ? `<a class="btn ghost sm" data-link href="/listings?${cleanQuery({ ...f, page: data.page + 1 })}">Next →</a>` : ''}</div>` : ''}`;
     $('#ff').addEventListener('submit', (ev) => { ev.preventDefault(); go('/listings?' + cleanQuery(formData(ev.target))); });
@@ -251,8 +251,8 @@
         <div class="facts">${p.address ? `<div class="fact"><small>Address</small><b>${e(p.address)}</b></div>` : ''}${p.title_doc ? `<div class="fact"><small>Title document</small><b>${e(p.title_doc)}</b></div>` : ''}
           <div class="fact"><small>Listed by</small><b>${e(p.listed_by)}</b></div></div>
         ${p.map_url ? `<p><a href="${e(p.map_url)}" target="_blank" rel="noopener">Open location on map ↗</a></p>` : ''}`}
-    </div>
-    <aside class="side">
+    <div id="pmain"></div></div>
+    <aside class="side"><div id="px" class="grid"></div>
       ${p.can_manage ? `<div class="card"><h3>Manage listing</h3><p>${status(p.status)}</p><div class="row"><a class="btn sm" href="/post?id=${p.id}" data-link>Edit</a>${p.status === 'active' ? `<button class="btn sm danger" data-act="sold" data-id="${p.id}">Mark sold</button>` : ''}</div></div>` : ''}
       ${!p.locked && p.contact_phone && !sold ? `<div class="card"><h3>Contact</h3><p class="notranslate"><b>${e(p.contact_phone)}</b></p><div class="row"><a class="btn sm" href="https://wa.me/${e(String(p.contact_phone).replace(/\D/g, '').replace(/^0/, '234'))}?text=${encodeURIComponent('Hello, I am interested in: ' + p.title + ' ' + location.origin + '/p/' + p.id)}" target="_blank" rel="noopener">Chat on WhatsApp</a><a class="btn sm ghost" href="tel:${e(p.contact_phone)}">Call</a></div></div>` : ''}
       ${p.plans && p.plans.length ? `<div class="card"><h3>Easy-buy plans</h3><div class="grid">${p.plans.map((pl) => `<div class="plan"><div class="spread"><b>${e(pl.name)}</b><span class="small muted">${pl.months} months</span></div>
@@ -263,6 +263,7 @@
       <div class="card"><h3>Share this property</h3>${shareBar(p)}</div>
       <p class="small center"><a href="/trust?report=${p.id}" data-link>Report this listing</a></p>
     </aside></div>`;
+    if (DG.propertyExtras) DG.propertyExtras(p);
     app.querySelectorAll('.thumbs button').forEach((b) => b.addEventListener('click', () => {
       app.querySelectorAll('.thumbs button').forEach((x) => x.classList.toggle('on', x === b));
       const tags = $('#gm .tags').outerHTML; $('#gm').innerHTML = main(media[b.dataset.i]) + tags;
@@ -288,6 +289,8 @@
         <div class="grid g3"><div><label>Bathrooms</label><input name="bathrooms" inputmode="numeric" value="${p && p.bathrooms ? p.bathrooms : ''}"></div><div><label>Title document</label><input name="title_doc" value="${v('title_doc')}" placeholder="C of O, R of O, Deed…"></div><div><label>Contact phone</label><input name="contact_phone" type="tel" value="${v('contact_phone')}"></div></div>
         <div><label>Full address <span class="muted small">(only shown after unlock)</span></label><input name="address" value="${v('address')}"></div>
         <div><label>Map link <span class="muted small">(optional, https)</span></label><input name="map_url" type="url" value="${v('map_url')}"></div>
+        <div class="grid g3"><div><label>Latitude <span class="muted small">(optional)</span></label><input name="lat" inputmode="decimal" value="${p && p.lat != null ? p.lat : ''}" placeholder="12.0022"></div><div><label>Longitude</label><input name="lng" inputmode="decimal" value="${p && p.lng != null ? p.lng : ''}" placeholder="8.5920"></div><div><label>Virtual tour / video link <span class="muted small">(https)</span></label><input name="tour_url" type="url" value="${v('tour_url')}"></div></div>
+        <div><label>Nearby <span class="muted small">(schools, roads, markets — comma separated, shown publicly)</span></label><input name="nearby" value="${v('nearby')}"></div>
         <div><label>Features <span class="muted small">(comma separated)</span></label><input name="features" value="${v('features')}" placeholder="Borehole, parking, BQ"></div>
         <div><label>Description</label><textarea name="description" maxlength="5000">${v('description')}</textarea></div>
         <label class="check"><input type="checkbox" name="easy_buy" value="1"${p && p.easy_buy ? ' checked' : ''}> Offer easy-buy instalment plans on this property</label>
@@ -357,14 +360,14 @@
 
   const escrowRow = (x, adminView) => {
     const acts = [];
-    if (x.status === 'awaiting_payment' && x.role === 'buyer') acts.push(`<button class="btn sm gold" data-act="epay" data-id="${x.id}">Pay ${money(x.amount + x.fee)}</button>`, `<button class="btn sm ghost" data-act="ecancel" data-id="${x.id}">Cancel</button>`);
+    if (x.status === 'awaiting_payment' && x.role === 'buyer') acts.push(`<button class="btn sm gold" data-act="epay" data-id="${x.id}">Pay ${money(x.amount + x.fee - (x.credit || 0))}</button>`, `<button class="btn sm ghost" data-act="ecancel" data-id="${x.id}">Cancel</button>`);
     if (x.status === 'funded' && x.role === 'buyer') acts.push(`<button class="btn sm" data-act="erelease" data-id="${x.id}">Confirm handover &amp; release</button>`);
     if (x.status === 'funded' && !adminView) acts.push(`<button class="btn sm ghost" data-act="edispute" data-id="${x.id}">Raise dispute</button>`);
-    if (adminView && ['funded', 'disputed'].includes(x.status)) acts.push(`<button class="btn sm" data-act="erelease" data-id="${x.id}">Release to seller</button>`, `<button class="btn sm danger" data-act="erefund" data-id="${x.id}">Refund buyer</button>`);
+    if (adminView && ['funded', 'disputed'].includes(x.status)) acts.push(`<button class="btn sm" data-act="erelease" data-id="${x.id}">Release to seller</button>`, x.docs_checked ? '' : `<button class="btn sm ghost" data-act="edocs" data-id="${x.id}">Documents verified</button>`, `<button class="btn sm danger" data-act="erefund" data-id="${x.id}">Refund buyer</button>`);
     return `<tr><td>#${x.id}<br><a href="/p/${x.property_id}" data-link>${e(x.property_title)}</a></td>
-      <td class="notranslate">${money(x.amount)}<br><span class="small muted">+ ${money(x.fee)} fee</span></td>
+      <td class="notranslate">${money(x.amount)}<br><span class="small muted">+ ${money(x.fee)} fee${x.credit ? `<br>− ${money(x.credit)} fees already paid` : ''}</span></td>
       <td>${adminView ? `<span class="small notranslate">Buyer: ${e(x.buyer_name)} +${e(x.buyer_phone)}<br>Seller: ${e(x.seller_name)} +${e(x.seller_phone)}</span>` : e(cap(x.role))}</td>
-      <td>${status(x.status)}<ul class="timeline">${x.events.map((v) => `<li>${date(v.created_at)} — ${e(v.event)}${v.note ? ': ' + e(v.note) : ''}</li>`).join('')}</ul></td><td><div class="row">${acts.join('')}</div></td></tr>`;
+      <td>${status(x.status)}${DG.tracker ? DG.tracker(x) : ''}<ul class="timeline">${x.events.map((v) => `<li>${date(v.created_at)} — ${e(v.event)}${v.note ? ': ' + e(v.note) : ''}</li>`).join('')}</ul></td><td><div class="row">${acts.join('')}</div></td></tr>`;
   };
   const subBlock = (s, adminView) => `<div class="card" style="margin-bottom:14px"><div class="spread"><h3><a href="/p/${s.property_id}" data-link>${e(s.property_title)}</a> — ${e(s.plan_name)}</h3>${status(s.status)}</div>
     <p class="small muted notranslate">${adminView ? `${e(s.user_name)} +${e(s.user_phone)} · ` : ''}Paid ${money(s.paid)} of ${money(s.total)}</p>
@@ -375,7 +378,7 @@
     if (needLogin()) return (app.innerHTML = '<p class="pad center muted">Sign in to see your dashboard.</p>');
     const tab = q.get('tab') || 'overview';
     const pro = ['agent', 'admin'].includes(S.user.role);
-    const tabs = [['overview', 'Overview'], ...(pro ? [['listings', 'My listings']] : []), ['plans', 'Easy-buy'], ['escrow', 'Escrow'], ['invest', 'Investments'], ['verify', 'Verification'], ['alerts', `Alerts${S.unread ? ` (${S.unread})` : ''}`]];
+    const tabs = [['overview', 'Overview'], ...(pro ? [['listings', 'My listings']] : []), ['messages', 'Messages'], ['inspections', 'Inspections'], ['saved', 'Saved'], ['plans', 'Easy-buy'], ['escrow', 'Escrow'], ['invest', 'Investments'], ['payments', 'Receipts & documents'], ['referrals', 'Refer & earn'], ['verify', 'Verification'], ['alerts', `Alerts${S.unread ? ` (${S.unread})` : ''}`]];
     let body = '';
     if (DG.dashTabs[tab]) body = await DG.dashTabs[tab]();
     else if (tab === 'listings') body = cards(await api('/my/properties'), 'You have not posted any property yet.');
@@ -406,13 +409,13 @@
       plans: `<h3>Plans offered</h3><div class="tablewrap"><table><tr><th>Name</th><th>Months</th><th>Deposit %</th><th>Markup %</th><th>Active</th><th></th></tr>${[...d.plans, { id: '', name: '', months: '', deposit_pct: '', markup_pct: '', active: 1 }].map((p) => `<tr data-plan="${p.id}"><td><input name="name" value="${e(p.name)}" placeholder="New plan name"></td><td><input name="months" inputmode="numeric" value="${e(p.months)}"></td><td><input name="deposit_pct" inputmode="decimal" value="${e(p.deposit_pct)}"></td><td><input name="markup_pct" inputmode="decimal" value="${e(p.markup_pct)}"></td><td><input type="checkbox" name="active" style="width:auto"${p.active ? ' checked' : ''}></td><td><button class="btn sm" data-act="saveplan">${p.id ? 'Save' : 'Add'}</button></td></tr>`).join('')}</table></div>
         <h3 style="margin-top:24px">Customer plans</h3>${d.subscriptions.map((x) => subBlock(x, true)).join('') || '<p class="muted">None yet.</p>'}`,
       users: `<div class="tablewrap"><table><tr><th>Member</th><th>Phone</th><th>Joined</th><th>Role</th></tr>${d.users.map((u) => `<tr><td>${e(u.name || '—')}</td><td class="notranslate">+${e(u.phone)}</td><td>${date(u.created_at)}</td><td><select data-role="${u.id}"${u.id === S.user.id ? ' disabled' : ''}>${opts(['buyer', 'agent', 'admin'], u.role)}</select></td></tr>`).join('')}</table></div>`,
-      settings: `<form id="sf" class="card grid"><h3>Fees</h3><div class="grid g3"><div><label>Default fee to view full details (₦)</label><input name="default_unlock_fee" inputmode="numeric" value="${e(d.settings.default_unlock_fee)}"></div><div><label>Escrow fee (%)</label><input name="escrow_fee_pct" inputmode="decimal" value="${e(d.settings.escrow_fee_pct)}"></div><div><label>Support WhatsApp number</label><input name="support_whatsapp" value="${e(d.settings.support_whatsapp)}"></div></div><div class="grid g3"><div><label>Contact email</label><input name="contact_email" type="email" value="${e(d.settings.contact_email)}"></div><div><label>Office address</label><input name="office_address" value="${e(d.settings.office_address)}"></div><div><label>Display currency rates (₦ per 1 unit, JSON)</label><input name="currency_rates" value="${e(d.settings.currency_rates)}"></div></div><div><button class="btn">Save settings</button></div></form>
+      settings: `<form id="sf" class="card grid"><h3>Fees</h3><div class="grid g3"><div><label>Default fee to view full details (₦)</label><input name="default_unlock_fee" inputmode="numeric" value="${e(d.settings.default_unlock_fee)}"></div><div><label>Escrow fee (%)</label><input name="escrow_fee_pct" inputmode="decimal" value="${e(d.settings.escrow_fee_pct)}"></div><div><label>Support WhatsApp number</label><input name="support_whatsapp" value="${e(d.settings.support_whatsapp)}"></div></div><div class="grid g3"><div><label>Contact email</label><input name="contact_email" type="email" value="${e(d.settings.contact_email)}"></div><div><label>Office address</label><input name="office_address" value="${e(d.settings.office_address)}"></div><div><label>Inspection fee (₦, confirms a booking)</label><input name="inspection_fee" inputmode="numeric" value="${e(d.settings.inspection_fee)}"></div><div><label>Title check fee (₦)</label><input name="title_check_fee" inputmode="numeric" value="${e(d.settings.title_check_fee)}"></div><div><label>Referral reward (₦)</label><input name="referral_reward" inputmode="numeric" value="${e(d.settings.referral_reward)}"></div><div><label>SPV unit resale market</label><select name="secondary_market">${opts([['0', 'Off'], ['1', 'On']], d.settings.secondary_market)}</select></div><div><label>Display currency rates (₦ per 1 unit, JSON)</label><input name="currency_rates" value="${e(d.settings.currency_rates)}"></div></div><div><button class="btn">Save settings</button></div></form>
         <form id="bf" class="card grid" style="margin-top:16px"><h3>Send a push notification to all members</h3><input name="title" placeholder="Title" required maxlength="80"><input name="body" placeholder="Message" maxlength="200"><div><button class="btn gold">Send to ${s.push_devices} device(s)</button></div></form>
         <div class="card" style="margin-top:16px"><h3>Integrations</h3><table><tr><td>WhatsApp (login codes + listing bot)</td><td>${on(ig.whatsapp)}</td></tr><tr><td>Paystack payments</td><td>${on(ig.payments)}</td></tr><tr><td>Video compression (ffmpeg)</td><td>${on(ig.video_compression)}</td></tr><tr><td>Auto-post to Facebook page</td><td>${on(ig.facebook)}</td></tr><tr><td>Auto-post to Telegram channel</td><td>${on(ig.telegram)}</td></tr></table><p class="small muted">Set these up in the server's .env file — see the README.</p></div>`,
     }[DG.adminTabs[tab] ? '' : tab] || (DG.adminTabs[tab] ? await DG.adminTabs[tab](d) : '');
     app.innerHTML = `<h1 style="margin-top:28px">Admin</h1>
       <div class="stats"><div class="stat"><b>${s.members}</b>Members</div><div class="stat"><b>${s.active}</b>Live listings</div><div class="stat"><b>${s.pending}</b>Awaiting approval</div><div class="stat"><b>${s.sold}</b>Sold</div><div class="stat"><b class="notranslate">${money(s.unlock_revenue)}</b>Unlock revenue</div><div class="stat"><b class="notranslate">${money(s.escrow_held)}</b>Held in escrow</div><div class="stat"><b>${mb(s.storage_used)}</b>Media storage (${mb(s.storage_saved)} saved)</div></div>
-      <div class="tabs">${[['listings', 'Listings'], ['escrow', 'Escrow'], ['plans', 'Easy-buy'], ['invest', 'Investments'], ['users', 'Members'], ['verify', 'Verification'], ['reports', 'Reports'], ['posts', 'Articles'], ['audit', 'Audit trail'], ['settings', 'Settings']].map(([k, t]) => `<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${t}</button>`).join('')}</div>${body}`;
+      <div class="tabs">${[['listings', 'Listings'], ['escrow', 'Escrow'], ['plans', 'Easy-buy'], ['invest', 'Investments'], ['desk', 'Service desk'], ['users', 'Members'], ['verify', 'Verification'], ['reports', 'Reports'], ['posts', 'Articles'], ['audit', 'Audit trail'], ['settings', 'Settings']].map(([k, t]) => `<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${t}</button>`).join('')}</div>${body}`;
     app.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => go('/admin?tab=' + b.dataset.tab)));
     app.querySelectorAll('[data-role]').forEach((sel) => sel.addEventListener('change', () => busy(sel, async () => { await api(`/admin/users/${sel.dataset.role}/role`, { method: 'POST', body: { role: sel.value } }); toast('Role updated.'); })));
     app.querySelectorAll('[data-act=saveplan]').forEach((b) => b.addEventListener('click', () => busy(b, async () => {
@@ -487,6 +490,8 @@
   };
 
   document.addEventListener('click', (ev) => {
+    const act = ev.target.closest('[data-act]');
+    if (act && ACTIONS[act.dataset.act]) { ev.preventDefault(); Promise.resolve(ACTIONS[act.dataset.act](act)).catch(fail); return; }
     const a = ev.target.closest('a[data-link]');
     if (a && !ev.metaKey && !ev.ctrlKey && !ev.shiftKey && a.target !== '_blank') { ev.preventDefault(); $('#nav').classList.remove('open'); go(a.getAttribute('href')); return; }
     const b = ev.target.closest('[data-act]');
@@ -533,6 +538,6 @@
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     render();
   }
-  const DG = (window.DG = { $, app, S, e, money, price, currency, SYM, cap, date, mb, status, opts, api, toast, busy, formData, go, needLogin, modal, closeModal, cards, pcard, place, cleanQuery, STATES, render, vbadge, pay, ACTIONS, routes: [], dashTabs: {}, adminTabs: {}, onBoot: [] });
+  const DG = (window.DG = { $, app, S, e, money, price, currency, SYM, cap, date, mb, status, opts, api, toast, busy, formData, go, needLogin, modal, closeModal, cards, pcard, place, cleanQuery, STATES, render, vbadge, pay, ACTIONS, easyBuyPage, shareBar, fail, routes: [], dashTabs: {}, adminTabs: {}, onBoot: [] });
   boot().catch(() => (app.innerHTML = '<p class="pad center">Could not load the site. Please refresh.</p>'));
 })();

@@ -37,7 +37,7 @@ const publicUser = (u) => (u ? {
 const api = express.Router();
 
 // Audit trail: every admin action and every sensitive member action is recorded.
-const AUDITED = /^\/(admin\/|escrows\/|me\/kyc$|spvs\/\d+\/invest$|properties\/\d+(\/(sold|submit|escrow))?$)/;
+const AUDITED = /^\/(admin\/|escrows\/|me\/kyc$|inspections\/|unit-listings\/|documents|spvs\/\d+\/invest$|properties\/\d+(\/(sold|submit|escrow))?$)/;
 api.use((req, res, next) => {
   if (req.method !== 'GET' && AUDITED.test(req.path)) {
     res.on('finish', () => {
@@ -72,6 +72,7 @@ api.post('/auth/verify', auth.rateLimit('verify', 20, 15 * 60 * 1000), (req, res
   auth.checkOtp(phone, req.body.code);
   const user = auth.upsertUser(phone, { name: req.body.name, role: req.body.role });
   if (user.isNew && user.role === 'agent') { db.prepare("UPDATE users SET account_type = 'agent' WHERE id = ?").run(user.id); user.account_type = 'agent'; }
+  if (user.isNew) experience.applyReferral(user, req.body.ref);
   audit(user.id, user.isNew ? 'signup' : 'login');
   auth.createSession(res, user.id);
   res.json({ user: publicUser(user) });
@@ -94,6 +95,7 @@ api.get('/me', (req, res) => {
       default_unlock_fee: Number(s.default_unlock_fee),
       escrow_fee_pct: Number(s.escrow_fee_pct),
       support_whatsapp: s.support_whatsapp,
+      inspection_fee: Number(s.inspection_fee), title_check_fee: Number(s.title_check_fee), referral_reward: Number(s.referral_reward), secondary_market: s.secondary_market === '1',
       contact_email: s.contact_email,
       office_address: s.office_address,
       currency_rates: (() => { try { return JSON.parse(s.currency_rates); } catch { return {}; } })(),
@@ -385,6 +387,8 @@ admin.put('/settings', (req, res) => {
         v = JSON.stringify(Object.fromEntries(Object.entries(r).filter(([k, n]) => /^[A-Z]{3}$/.test(k) && Number(n) > 0).slice(0, 8)));
       } catch { continue; }
     }
+    if (['inspection_fee', 'title_check_fee', 'referral_reward'].includes(key)) v = String(listings.int(v, 1e8));
+    if (key === 'secondary_market') v = /^(1|true|on|yes)$/i.test(v) ? '1' : '0';
     if (key === 'default_unlock_fee') v = String(listings.int(v, 1e7));
     if (key === 'escrow_fee_pct') v = String(Math.min(Math.max(Number(v) || 0, 0), 20));
     setSetting(key, v);
@@ -427,11 +431,20 @@ admin.post('/broadcast', (req, res) => {
 
 api.use(require('./extras')({ publicUser }));
 api.use(require('./invest'));
+const experience = require('./experience');
+api.use(experience.router);
 api.use('/admin', admin);
 api.use((_req, _res, next) => next(new HttpError(404, 'Not found.')));
 app.use('/api', api);
 
 // ---------- Static files + pages ----------
+
+// Lets the Android app (a Trusted Web Activity) open the site full-screen without a browser bar.
+app.get('/.well-known/assetlinks.json', (_req, res) => {
+  res.json(config.ANDROID_PACKAGE && config.ANDROID_SHA256.length
+    ? [{ relation: ['delegate_permission/common.handle_all_urls'], target: { namespace: 'android_app', package_name: config.ANDROID_PACKAGE, sha256_cert_fingerprints: config.ANDROID_SHA256 } }]
+    : []);
+});
 
 app.use('/media', express.static(config.MEDIA_DIR, { maxAge: '30d', immutable: true, index: false }));
 app.use(express.static(path.join(__dirname, '..', 'public'), { index: false, setHeaders: (res, file) => {
@@ -501,6 +514,8 @@ function sweep() {
 if (require.main === module) {
   sweep();
   setInterval(sweep, 3600 * 1000).unref();
+  experience.remind();
+  setInterval(experience.remind, 3600 * 1000).unref();
   app.listen(config.PORT, () => {
     console.log(`${config.SITE_NAME} running at ${config.BASE_URL}`);
     if (!config.WHATSAPP_LIVE) console.log('  WhatsApp: DEMO mode (codes are logged here, not sent). Set WHATSAPP_TOKEN + WHATSAPP_PHONE_ID.');

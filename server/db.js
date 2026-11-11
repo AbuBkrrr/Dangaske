@@ -220,6 +220,14 @@ addColumn('users', 'suspended', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('properties', 'verified', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('properties', 'featured', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('properties', 'new_dev', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('properties', 'lat', 'REAL');
+addColumn('properties', 'lng', 'REAL');
+addColumn('properties', 'nearby', "TEXT NOT NULL DEFAULT ''");
+addColumn('properties', 'tour_url', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'referred_by', 'INTEGER');
+addColumn('installments', 'reminded_at', 'TEXT');
+addColumn('escrows', 'credit', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('escrows', 'docs_checked', 'INTEGER NOT NULL DEFAULT 0');
 
 const audit = (actorId, action, detail = '') =>
   db.prepare('INSERT INTO audit(actor_id, action, detail) VALUES(?,?,?)').run(actorId || null, String(action).slice(0, 120), String(detail).slice(0, 500));
@@ -228,6 +236,10 @@ const DEFAULT_SETTINGS = {
   default_unlock_fee: '1000', // naira charged to view full details of a listing
   escrow_fee_pct: '1.5',
   support_whatsapp: '',
+  inspection_fee: '5000',     // paid to confirm an inspection appointment; credited towards the purchase
+  title_check_fee: '25000',   // title verification report
+  referral_reward: '0',       // naira paid to a referrer when the person they invited buys
+  secondary_market: '0',      // 1 = investors may resell SPV units to other verified members
   contact_email: '',
   office_address: '',
   currency_rates: '{"USD":1600,"GBP":2050,"AED":435}', // naira per 1 unit, display only
@@ -252,4 +264,4 @@ if (!db.prepare('SELECT 1 FROM plans LIMIT 1').get()) {
   ins.run('Flexi 24', 24, 20, 12);
 }
 
-module.exports = { db, audit, getSetting, setSetting, allSettings, DEFAULT_SETTINGS };
+module.exports = { db, addColumn, audit, getSetting, setSetting, allSettings, DEFAULT_SETTINGS };

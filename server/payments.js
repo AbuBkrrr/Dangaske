@@ -9,6 +9,8 @@ const listings = require('./listings');
 const push = require('./push');
 
 const DEMO = !config.PAYMENTS_LIVE;
+/** Extra payment purposes register here: purpose -> (payment, alreadyPaid, afterCommit[]) => { redirect, message } */
+const handlers = {};
 
 async function paystack(method, path, body) {
   const res = await fetch(`https://api.paystack.co${path}`, {
@@ -103,6 +105,7 @@ function fulfil(payment) {
       }
       return { redirect: '/dashboard?tab=invest', message: 'Investment confirmed. Your units are in your portfolio.' };
     }
+    if (handlers[fresh.purpose]) return handlers[fresh.purpose](fresh, already, after);
     return { redirect: '/dashboard', message: 'Payment received.' };
   })();
   for (const fn of after) fn();
@@ -222,9 +225,14 @@ function createEscrow(user, property, { amount, note }) {
   if (mine) return mine.id;
   const amt = listings.int(amount) || property.price;
   const fee = Math.round((amt * Number(getSetting('escrow_fee_pct') || 0)) / 100);
+  // Fees already paid to view or inspect this property are credited towards the purchase.
+  const credit = Math.min(fee + amt - 1, db
+    .prepare(`SELECT COALESCE(SUM(amount),0) AS n FROM payments WHERE user_id = ? AND status = 'paid' AND (
+                (purpose = 'unlock' AND target_id = ?) OR (purpose = 'inspection' AND target_id IN (SELECT id FROM inspections WHERE property_id = ?)))`)
+    .get(user.id, property.id, property.id).n);
   const id = db
-    .prepare('INSERT INTO escrows(property_id, buyer_id, seller_id, amount, fee, note) VALUES(?,?,?,?,?,?)')
-    .run(property.id, user.id, property.owner_id, amt, fee, listings.str(note, 500)).lastInsertRowid;
+    .prepare('INSERT INTO escrows(property_id, buyer_id, seller_id, amount, fee, note, credit) VALUES(?,?,?,?,?,?,?)')
+    .run(property.id, user.id, property.owner_id, amt, fee, listings.str(note, 500), credit).lastInsertRowid;
   escrowEvent(id, user.id, 'opened', listings.str(note, 500));
   push.notify({ userId: property.owner_id, title: 'Escrow opened', body: `A buyer opened escrow for ${property.title} (${listings.naira(amt)}).`, url: '/dashboard' });
   return id;
@@ -254,7 +262,7 @@ async function payEscrow(user, id) {
   if (e.status !== 'awaiting_payment') throw new HttpError(409, 'This escrow is not awaiting payment.');
   const held = db.prepare("SELECT 1 FROM escrows WHERE property_id = ? AND status IN ('funded','disputed')").get(e.property_id);
   if (held) throw new HttpError(409, 'Another buyer already has this property in escrow.');
-  return start(user, 'escrow', e.id, e.amount + e.fee);
+  return start(user, 'escrow', e.id, e.amount + e.fee - e.credit);
 }
 
 const setEscrow = (id, status) => db.prepare("UPDATE escrows SET status = ?, updated_at = datetime('now') WHERE id = ?").run(status, id);
@@ -303,7 +311,7 @@ function cancelEscrow(user, id) {
 }
 
 module.exports = {
-  DEMO, start, verify, demoConfirm, demoInfo, webhook,
+  DEMO, handlers, start, verify, demoConfirm, demoInfo, webhook,
   quote, subscribe, subscriptionsFor, payInstallment,
   createEscrow, escrowsFor, payEscrow, releaseEscrow, disputeEscrow, refundEscrow, cancelEscrow,
 };

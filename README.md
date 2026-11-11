@@ -33,6 +33,25 @@ The site name is set with `SITE_NAME` in `.env`, so it can be changed in one pla
 | Articles | Insights, guides, newsroom and careers are written in Admin → Articles. |
 | Extras | Ctrl/⌘K search, floating WhatsApp chat button, installable app (PWA), read-only public API (`/developers`), About / Contact / Terms / Privacy pages. |
 
+### Customer experience
+
+| Feature | How it works |
+| --- | --- |
+| Paid inspection booking | Buyer picks a date/time and pays the inspection fee (Admin → Settings, default ₦5,000) to confirm. The agent is only notified once it is paid. Paying also unlocks the address. |
+| Fee credit | Viewing and inspection fees already paid are deducted when the buyer pays for that property through escrow. |
+| Chat | Buyer–agent messages on any unlocked listing, with push alerts. |
+| Reminders | Hourly job sends push + WhatsApp reminders for instalments due within 3 days (or overdue) and inspections in the next 24 hours. |
+| Saved searches, favourites, compare | Alerts when a new listing matches a saved search; compare up to 3 listings side by side. |
+| Receipts and document vault | Printable receipt for every payment; private vault for offer letters, deeds and survey plans (admin can send documents to a member). |
+| Reviews | Star ratings for agents, allowed only after a completed inspection or purchase. |
+| Title verification report | Paid add-on; admin writes the findings in Admin → Service desk. |
+| Purchase tracker | Offer → paid into escrow → documents checked → handover, on every escrow. |
+| Map, nearby, virtual tour | Listings can carry coordinates, nearby places and a tour link. Public map pins are rounded to about 1 km; the exact pin shows after unlock. |
+| Affordability calculator | On the Easy-buy page. |
+| Referrals | Each member has a link; rewards due are listed in Admin → Service desk and paid manually. |
+| SPV unit resale | Off by default (Admin → Settings). Verified members can sell units to each other; the seller is paid out manually. |
+| Android app | The site packaged for the Play Store — see `android/README.md`. |
+
 > **Before opening an SPV offer to the public**, have the structure and offer documents reviewed by a lawyer; public investment offers are regulated (SEC Nigeria). The Terms and Privacy pages are starting templates and also need legal review.
 
 ## Run it

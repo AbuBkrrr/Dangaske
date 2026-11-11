@@ -1,0 +1,25 @@
+{
+  "packageId": "ng.dangaske.dangida",
+  "host": "YOUR-DOMAIN.com",
+  "name": "DanGida",
+  "launcherName": "DanGida",
+  "display": "standalone",
+  "orientation": "portrait",
+  "themeColor": "#0f3d2e",
+  "navigationColor": "#0f3d2e",
+  "backgroundColor": "#faf7f0",
+  "startUrl": "/?source=app",
+  "iconUrl": "https://YOUR-DOMAIN.com/icon-512.png",
+  "maskableIconUrl": "https://YOUR-DOMAIN.com/icon-maskable-512.png",
+  "webManifestUrl": "https://YOUR-DOMAIN.com/manifest.webmanifest",
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "minSdkVersion": 23,
+  "enableNotifications": true,
+  "fallbackType": "customtabs",
+  "signingKey": { "path": "./android.keystore", "alias": "dangida" },
+  "shortcuts": [
+    { "name": "Browse properties", "shortName": "Browse", "url": "/listings", "chosenIconUrl": "https://YOUR-DOMAIN.com/icon-192.png" },
+    { "name": "My inspections", "shortName": "Inspections", "url": "/dashboard?tab=inspections", "chosenIconUrl": "https://YOUR-DOMAIN.com/icon-192.png" }
+  ]
+}
