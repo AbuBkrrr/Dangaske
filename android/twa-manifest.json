@@ -1,25 +1,25 @@
 {
-  "packageId": "ng.dangaske.dangida",
-  "host": "YOUR-DOMAIN.com",
-  "name": "DanGida",
-  "launcherName": "DanGida",
+  "packageId": "ng.com.dangaskerealestate",
+  "host": "dangaskerealestate.com.ng",
+  "name": "Dangaske Real Estate",
+  "launcherName": "Dangaske",
   "display": "standalone",
   "orientation": "portrait",
-  "themeColor": "#0f3d2e",
-  "navigationColor": "#0f3d2e",
-  "backgroundColor": "#faf7f0",
+  "themeColor": "#14148a",
+  "navigationColor": "#14148a",
+  "backgroundColor": "#f6f7fb",
   "startUrl": "/?source=app",
-  "iconUrl": "https://YOUR-DOMAIN.com/icon-512.png",
-  "maskableIconUrl": "https://YOUR-DOMAIN.com/icon-maskable-512.png",
-  "webManifestUrl": "https://YOUR-DOMAIN.com/manifest.webmanifest",
+  "iconUrl": "https://dangaskerealestate.com.ng/icon-512.png",
+  "maskableIconUrl": "https://dangaskerealestate.com.ng/icon-maskable-512.png",
+  "webManifestUrl": "https://dangaskerealestate.com.ng/manifest.webmanifest",
   "appVersionName": "1.0.0",
   "appVersionCode": 1,
   "minSdkVersion": 23,
   "enableNotifications": true,
   "fallbackType": "customtabs",
-  "signingKey": { "path": "./android.keystore", "alias": "dangida" },
+  "signingKey": { "path": "./android.keystore", "alias": "dangaske" },
   "shortcuts": [
-    { "name": "Browse properties", "shortName": "Browse", "url": "/listings", "chosenIconUrl": "https://YOUR-DOMAIN.com/icon-192.png" },
-    { "name": "My inspections", "shortName": "Inspections", "url": "/dashboard?tab=inspections", "chosenIconUrl": "https://YOUR-DOMAIN.com/icon-192.png" }
+    { "name": "Browse properties", "shortName": "Browse", "url": "/listings", "chosenIconUrl": "https://dangaskerealestate.com.ng/icon-192.png" },
+    { "name": "My inspections", "shortName": "Inspections", "url": "/dashboard?tab=inspections", "chosenIconUrl": "https://dangaskerealestate.com.ng/icon-192.png" }
   ]
 }

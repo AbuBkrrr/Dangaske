@@ -1,4 +1,4 @@
-# DanGida Android app
+# Dangaske Real Estate Android app
 
 The Android app is the website packaged as a **Trusted Web Activity**: it installs from the Play Store,
 opens full-screen with no browser bar, and receives the same push notifications. There is one codebase —
@@ -8,7 +8,7 @@ It needs the site to be live on HTTPS first.
 
 ## Build (on a computer with Node.js and Java 17)
 
-1. Put your domain in `twa-manifest.json` (replace `YOUR-DOMAIN.com`; change `packageId` if you wish).
+1. `twa-manifest.json` is already filled in for `dangaskerealestate.com.ng`.
 2. Install the packaging tool and generate the project:
 
 ```bash
@@ -16,7 +16,7 @@ npm install -g @bubblewrap/cli
 ```
 
 ```bash
-bubblewrap init --manifest https://YOUR-DOMAIN.com/manifest.webmanifest
+bubblewrap init --manifest https://dangaskerealestate.com.ng/manifest.webmanifest
 ```
 
    Answer the prompts with the values from `twa-manifest.json`. Bubblewrap downloads the Android SDK and
@@ -39,7 +39,7 @@ bubblewrap fingerprint list
 ```
 
 5. In the server's `.env` set `ANDROID_PACKAGE` (the package id) and `ANDROID_SHA256` (the fingerprint), then restart.
-   Check that `https://YOUR-DOMAIN.com/.well-known/assetlinks.json` now shows them.
+   Check that `https://dangaskerealestate.com.ng/.well-known/assetlinks.json` now shows them.
 6. When you upload to Google Play with Play App Signing, Google re-signs the app. Copy the **App signing key** SHA-256
    from Play Console → Setup → App integrity and add it to `ANDROID_SHA256` as well (comma separated). Without it the
    app shows a browser bar.

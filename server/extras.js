@@ -10,6 +10,8 @@ const { db } = require('./db');
 const { HttpError, requireAuth, requireRole, rateLimit } = require('./auth');
 const listings = require('./listings');
 const push = require('./push');
+const mail = require('./mail');
+const auth = require('./auth');
 
 const KYC_DIR = path.join(config.DATA_DIR, 'kyc'); // private: never served from /media
 fs.mkdirSync(KYC_DIR, { recursive: true });
@@ -46,6 +48,29 @@ module.exports = ({ publicUser }) => {
     const service = type === 'service' && SERVICES.includes(b.service_category) ? b.service_category : '';
     db.prepare('UPDATE users SET name = ?, company = ?, bio = ?, city = ?, account_type = ?, service_category = ? WHERE id = ?')
       .run(str(b.name, 80), pro ? str(b.company, 100) : '', str(b.bio, 600), str(b.city, 60), type, service, req.user.id);
+    res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)) });
+  });
+
+  // Optional email address: verified with a code before it is used for sign-in codes and notifications.
+  r.post('/me/email', requireAuth, rateLimit('email', 6, 60 * 60 * 1000), async (req, res) => {
+    const email = str(req.body.email, 200).toLowerCase();
+    if (!email) {
+      db.prepare("UPDATE users SET email = '', email_verified = 0 WHERE id = ?").run(req.user.id);
+      return res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)) });
+    }
+    if (!mail.valid(email)) throw new HttpError(400, 'Enter a valid email address.');
+    const code = auth.createOtp(`email:${req.user.id}`);
+    db.prepare('UPDATE users SET email = ?, email_verified = 0 WHERE id = ?').run(email, req.user.id);
+    if (!(await mail.send(email, `${code} is your ${config.SITE_NAME} email code`, `Enter this code to confirm your email address: ${code}\nIt expires in 10 minutes.`))) {
+      throw new HttpError(502, 'We could not send an email to that address.');
+    }
+    const out = { user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)) };
+    if (!mail.LIVE && !config.PRODUCTION) out.demo_code = code; // demo mode only
+    res.json(out);
+  });
+  r.post('/me/email/verify', requireAuth, rateLimit('emailv', 20, 15 * 60 * 1000), (req, res) => {
+    auth.checkOtp(`email:${req.user.id}`, req.body.code);
+    db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(req.user.id);
     res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)) });
   });
 

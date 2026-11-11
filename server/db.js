@@ -225,6 +225,8 @@ addColumn('properties', 'lng', 'REAL');
 addColumn('properties', 'nearby', "TEXT NOT NULL DEFAULT ''");
 addColumn('properties', 'tour_url', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'referred_by', 'INTEGER');
+addColumn('users', 'email', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'email_verified', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('installments', 'reminded_at', 'TEXT');
 addColumn('escrows', 'credit', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('escrows', 'docs_checked', 'INTEGER NOT NULL DEFAULT 0');
@@ -235,13 +237,14 @@ const audit = (actorId, action, detail = '') =>
 const DEFAULT_SETTINGS = {
   default_unlock_fee: '1000', // naira charged to view full details of a listing
   escrow_fee_pct: '1.5',
-  support_whatsapp: '',
+  support_whatsapp: '2348037572052',
+  phones: '+234 803 757 2052, +234 816 130 4050',
   inspection_fee: '5000',     // paid to confirm an inspection appointment; credited towards the purchase
   title_check_fee: '25000',   // title verification report
   referral_reward: '0',       // naira paid to a referrer when the person they invited buys
   secondary_market: '0',      // 1 = investors may resell SPV units to other verified members
   contact_email: '',
-  office_address: '',
+  office_address: 'Office B09, Sadiq City Plaza, Rijiyar Zaki by Ring Road, Kano State, Nigeria',
   currency_rates: '{"USD":1600,"GBP":2050,"AED":435}', // naira per 1 unit, display only
 };
 

@@ -11,6 +11,7 @@ const media = require('./media');
 const payments = require('./payments');
 const push = require('./push');
 const whatsapp = require('./whatsapp');
+const mail = require('./mail');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -32,6 +33,7 @@ const upload = multer({
 
 const publicUser = (u) => (u ? {
   id: u.id, phone: u.phone, name: u.name, role: u.role, account_type: u.account_type, company: u.company, bio: u.bio, city: u.city,
+  email: u.email, email_verified: Boolean(u.email_verified),
   service_category: u.service_category, verified: Boolean(u.verified), kyc_status: u.kyc_status, kyc_note: u.kyc_note,
 } : null);
 const api = express.Router();
@@ -53,14 +55,21 @@ api.post('/auth/request-otp', auth.rateLimit('otp', 8, 15 * 60 * 1000), async (r
   const phone = auth.normalizePhone(req.body.phone);
   if (!phone) throw new HttpError(400, 'Enter a valid phone number.');
   const code = auth.createOtp(phone);
+  // The code goes to WhatsApp and, for members with a verified email address, to their email too.
+  const known = db.prepare('SELECT email, email_verified FROM users WHERE phone = ?').get(phone);
+  const channels = [];
   try {
     await whatsapp.sendOtp(phone, code);
+    channels.push('whatsapp');
   } catch (e) {
     console.error(e.message);
+  }
+  if (known && known.email_verified && await mail.send(known.email, `${code} is your ${config.SITE_NAME} code`, `Your verification code is ${code}. It expires in 10 minutes. Do not share it.`)) channels.push('email');
+  if (!channels.length) {
     db.prepare('DELETE FROM otps WHERE phone = ?').run(phone);
     throw new HttpError(502, 'We could not send the code on WhatsApp. Check the number and try again.');
   }
-  const out = { ok: true, phone, is_new: !db.prepare('SELECT 1 FROM users WHERE phone = ?').get(phone) };
+  const out = { ok: true, phone, channels, is_new: !known };
   // Demo mode only (WhatsApp not configured, not production): show the code so the site can be tried.
   if (!config.WHATSAPP_LIVE && !config.PRODUCTION) out.demo_code = code;
   res.json(out);
@@ -96,6 +105,7 @@ api.get('/me', (req, res) => {
       escrow_fee_pct: Number(s.escrow_fee_pct),
       support_whatsapp: s.support_whatsapp,
       inspection_fee: Number(s.inspection_fee), title_check_fee: Number(s.title_check_fee), referral_reward: Number(s.referral_reward), secondary_market: s.secondary_market === '1',
+      phones: s.phones, rc_number: config.RC_NUMBER,
       contact_email: s.contact_email,
       office_address: s.office_address,
       currency_rates: (() => { try { return JSON.parse(s.currency_rates); } catch { return {}; } })(),
@@ -355,7 +365,7 @@ admin.get('/overview', (req, res) => {
     users: db.prepare('SELECT id, phone, name, role, created_at, account_type, company, verified, kyc_status, kyc_doc_type, kyc_note, suspended FROM users ORDER BY id DESC LIMIT 200').all(),
     settings: allSettings(),
     integrations: {
-      whatsapp: config.WHATSAPP_LIVE, payments: config.PAYMENTS_LIVE, video_compression: media.HAS_FFMPEG,
+      whatsapp: config.WHATSAPP_LIVE, email: mail.LIVE, payments: config.PAYMENTS_LIVE, video_compression: media.HAS_FFMPEG,
       facebook: Boolean(config.FB_PAGE_ID && config.FB_PAGE_TOKEN), telegram: Boolean(config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_CHAT_ID),
     },
   });
@@ -433,6 +443,14 @@ api.use(require('./extras')({ publicUser }));
 api.use(require('./invest'));
 const experience = require('./experience');
 api.use(experience.router);
+// Shared hosts put idle apps to sleep, so the hourly jobs can also be triggered by a cron job:
+//   curl -s "https://your-domain/api/cron?key=CRON_KEY"
+api.get('/cron', (req, res) => {
+  if (!config.CRON_KEY || req.query.key !== config.CRON_KEY) return res.sendStatus(404);
+  sweep();
+  res.json({ ok: true, ...experience.remind() });
+});
+
 api.use('/admin', admin);
 api.use((_req, _res, next) => next(new HttpError(404, 'Not found.')));
 app.use('/api', api);
@@ -511,17 +529,24 @@ function sweep() {
   }
 }
 
-if (require.main === module) {
+let started = false;
+function start() {
+  if (started) return;
+  started = true;
   sweep();
   setInterval(sweep, 3600 * 1000).unref();
   experience.remind();
   setInterval(experience.remind, 3600 * 1000).unref();
   app.listen(config.PORT, () => {
     console.log(`${config.SITE_NAME} running at ${config.BASE_URL}`);
+    if (!mail.LIVE) console.log('  Email: DEMO mode (messages are logged here). Set SMTP_HOST, SMTP_USER, SMTP_PASS.');
     if (!config.WHATSAPP_LIVE) console.log('  WhatsApp: DEMO mode (codes are logged here, not sent). Set WHATSAPP_TOKEN + WHATSAPP_PHONE_ID.');
     if (!config.PAYMENTS_LIVE) console.log('  Payments: DEMO mode (simulated checkout). Set PAYSTACK_SECRET_KEY.');
     if (!media.HAS_FFMPEG) console.log('  ffmpeg not found: videos are stored without compression.');
   });
 }
 
+if (require.main === module) start();
+
+app.start = start;
 module.exports = app;

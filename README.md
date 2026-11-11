@@ -1,13 +1,15 @@
-# DanGida
+# Dangaske Real Estate
 
-Property marketplace for **Dangaske Real Estate & Property Services Ltd**.
+Property marketplace for **Dangaske Real Estate & Property Services Ltd** (RC 8511141) — dangaskerealestate.com.ng.
+
+**Deploying to WhoGoHost? Follow [docs/DEPLOY-WHOGOHOST.md](docs/DEPLOY-WHOGOHOST.md).**
 The site name is set with `SITE_NAME` in `.env`, so it can be changed in one place.
 
 ## Features
 
 | Feature | How it works |
 | --- | --- |
-| Phone sign-up, WhatsApp verification | Members enter a phone number and receive a 6-digit code on WhatsApp (WhatsApp Cloud API). |
+| Phone sign-up, WhatsApp verification | Members enter a phone number and receive a 6-digit code on WhatsApp (WhatsApp Cloud API). Email is optional: members who add and confirm one also get codes, receipts and personal alerts by email. |
 | Easy-buy plans | Deposit + monthly instalments. Plans are edited in Admin → Easy-buy; each listing opts in. |
 | Manage listings from WhatsApp | Admins/agents message the business number: `NEW`, send photos/videos, `PUBLISH`, `SOLD 12`, `PRICE 12 …`, `EDIT`, `DELETE`, `LIST`. Send `HELP` for the menu. |
 | Escrow | Buyer pays in, funds are held, buyer confirms handover to release; disputes are settled by an admin (release or refund). |

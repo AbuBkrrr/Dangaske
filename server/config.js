@@ -14,8 +14,9 @@ const digits = (s) => String(s || '').replace(/\D/g, '');
 const config = {
   PORT: Number(env.PORT) || 3000,
   BASE_URL: (env.BASE_URL || `http://localhost:${Number(env.PORT) || 3000}`).replace(/\/$/, ''),
-  SITE_NAME: env.SITE_NAME || 'DanGida',
-  COMPANY: 'Dangaske Real Estate & Property Services Ltd',
+  SITE_NAME: env.SITE_NAME || 'Dangaske Real Estate',
+  COMPANY: env.COMPANY_NAME || 'Dangaske Real Estate & Property Services Ltd',
+  RC_NUMBER: env.RC_NUMBER || '8511141',
   SESSION_SECRET: env.SESSION_SECRET || 'dev-secret-change-me',
   DATA_DIR: path.resolve(env.DATA_DIR || path.join(__dirname, '..', 'data')),
   PRODUCTION: env.NODE_ENV === 'production',
@@ -34,6 +35,14 @@ const config = {
   VAPID_PUBLIC_KEY: env.VAPID_PUBLIC_KEY || '',
   VAPID_PRIVATE_KEY: env.VAPID_PRIVATE_KEY || '',
   VAPID_SUBJECT: env.VAPID_SUBJECT || 'mailto:admin@example.com',
+
+  SMTP_HOST: env.SMTP_HOST || '',
+  SMTP_PORT: Number(env.SMTP_PORT) || 465,
+  SMTP_USER: env.SMTP_USER || '',
+  SMTP_PASS: env.SMTP_PASS || '',
+  MAIL_FROM: env.MAIL_FROM || env.SMTP_USER || 'no-reply@localhost',
+  // Secret for the hourly reminder URL called by the host's cron job
+  CRON_KEY: env.CRON_KEY || '',
 
   ANDROID_PACKAGE: env.ANDROID_PACKAGE || '',
   ANDROID_SHA256: (env.ANDROID_SHA256 || '').split(',').map((x) => x.trim()).filter(Boolean),

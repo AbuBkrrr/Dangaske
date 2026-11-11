@@ -1,4 +1,4 @@
-/* DanGida v3: inspections (fee confirms booking), chat, saved items, receipts & vault, reviews,
+/* Dangaske Real Estate v3: inspections (fee confirms booking), chat, saved items, receipts & vault, reviews,
    title checks, purchase tracker, map, compare, affordability, referrals, SPV unit resale. */
 (() => {
   const DG = window.DG;
@@ -198,7 +198,7 @@
       if (!$('#mapbox')) return;
       const map = window.L.map('mapbox').setView(pins.length ? pins[0].approx : [9.08, 8.68], pins.length ? 11 : 6);
       window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
-      pins.forEach((p) => window.L.circle(p.approx, { radius: 600, color: '#0f3d2e', fillColor: '#e3b04b', fillOpacity: 0.5 }).addTo(map).bindPopup(`<b>${e(p.title)}</b><br>${e(price(p.price))}<br><a href="/p/${p.id}">View property</a>`));
+      pins.forEach((p) => window.L.circle(p.approx, { radius: 600, color: '#14148a', fillColor: '#d81f2a', fillOpacity: 0.5 }).addTo(map).bindPopup(`<b>${e(p.title)}</b><br>${e(price(p.price))}<br><a href="/p/${p.id}">View property</a>`));
       if (pins.length > 1) map.fitBounds(pins.map((p) => p.approx), { padding: [30, 30] });
     } catch { const b = $('#mapbox'); if (b) b.outerHTML = '<p class="card">The map could not be loaded. Please check your connection and try again.</p>'; }
   });

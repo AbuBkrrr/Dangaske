@@ -1,4 +1,4 @@
-/* DanGida v2 pages: discovery, professionals, trust centre, SPV investment, insights, company. */
+/* Dangaske Real Estate v2 pages: discovery, professionals, trust centre, SPV investment, insights, company. */
 (() => {
   const DG = window.DG;
   const { $, app, S, e, money, price, cap, date, status, opts, api, toast, busy, formData, go, needLogin, modal, closeModal, cards, STATES, render, vbadge } = DG;
@@ -49,7 +49,7 @@
     app.innerHTML = `<div class="hero"><div class="hero-in">
       <h1>Own property the <em>easy</em>, safe way.</h1>
       <p>Verified houses, land and investment opportunities from ${co()}. Pay in instalments, invest through an SPV, and protect every deal with escrow.</p>
-      <div class="pills" id="stabs">${tabs.map(([k, t], i) => `<button class="pill${i ? '' : ' on'}" data-k="${k}" style="border:0;cursor:pointer${i ? '' : ';background:var(--gold);color:#2b2205'}">${t}</button>`).join('')}</div>
+      <div class="pills" id="stabs">${tabs.map(([k, t], i) => `<button class="pill${i ? '' : ' on'}" data-k="${k}" style="border:0;cursor:pointer${i ? '' : ';background:var(--gold);color:#ffffff'}">${t}</button>`).join('')}</div>
       <form class="search" id="hs" style="margin-top:12px"><input class="wide" name="q" placeholder="City, area or keyword" aria-label="Search">
         <select name="type" aria-label="Type">${opts(S.cfg.types, '', 'Any type')}</select>
         <select name="beds" aria-label="Bedrooms">${opts([1, 2, 3, 4, 5].map((n) => [n, n + '+ beds']), '', 'Any beds')}</select>
@@ -69,7 +69,7 @@
       <p style="margin-top:14px"><a href="/trust" data-link>Visit the trust centre →</a></p></section>
     <section class="band"><div><h2>Take ${e(S.cfg.site_name)} with you</h2><p>Install the app on your phone for instant alerts on new listings and sales.</p></div><div class="row"><button class="btn gold" data-act="install">Install the app</button><a class="btn light" href="/request" data-link>Request a property</a></div></section>`;
     let mode = 'sale';
-    app.querySelectorAll('#stabs button').forEach((b) => b.addEventListener('click', () => { mode = b.dataset.k; app.querySelectorAll('#stabs button').forEach((x) => { const on = x === b; x.style.background = on ? 'var(--gold)' : ''; x.style.color = on ? '#2b2205' : ''; }); }));
+    app.querySelectorAll('#stabs button').forEach((b) => b.addEventListener('click', () => { mode = b.dataset.k; app.querySelectorAll('#stabs button').forEach((x) => { const on = x === b; x.style.background = on ? 'var(--gold)' : ''; x.style.color = on ? '#ffffff' : ''; }); }));
     $('#hs').addEventListener('submit', (ev) => { ev.preventDefault(); go('/listings?' + DG.cleanQuery({ ...formData(ev.target), ...(mode === 'new' ? { new_dev: 1 } : { purpose: mode }) })); });
   });
 
@@ -211,6 +211,7 @@
     app.innerHTML = `${h1('Contact us', `Questions about a property, an investment offer, a partnership or your account — we are glad to help.`)}
       <div class="grid g2"><div>${reportForm('contact')}</div><div class="card"><h3 class="notranslate">${e(S.cfg.company)}</h3>
         ${S.cfg.office_address ? `<p>${e(S.cfg.office_address)}</p>` : ''}${S.cfg.contact_email ? `<p class="notranslate"><a href="mailto:${e(S.cfg.contact_email)}">${e(S.cfg.contact_email)}</a></p>` : ''}
+        ${S.cfg.phones ? `<p class="notranslate">${e(S.cfg.phones)}</p>` : ''}${S.cfg.rc_number ? `<p class="small muted notranslate">RC ${e(S.cfg.rc_number)}</p>` : ''}
         ${wa ? `<p><a class="btn sm" href="https://wa.me/${e(wa.replace(/^0/, '234'))}" target="_blank" rel="noopener">Chat on WhatsApp</a></p>` : ''}<p class="small muted">To report fraud or a security issue, use the <a href="/trust" data-link>trust centre</a>.</p></div></div>`;
     bindReport();
   });
@@ -262,6 +263,9 @@
       ${pro ? `<div class="grid g2"><div><label>Company / trading name</label><input name="company" value="${e(u.company)}" maxlength="100"></div><div><label>Service <span class="small muted">(service providers)</span></label><select name="service_category">${opts(mt.services, u.service_category, '—')}</select></div></div>
         <div><label>About <span class="small muted">(shown on your public profile)</span></label><textarea name="bio" maxlength="600">${e(u.bio)}</textarea></div>` : ''}
       <div class="row"><button class="btn sm">Save profile</button>${pro ? `<a class="small" href="/agents/${u.id}" data-link>View public profile</a>` : ''}<span class="small muted notranslate">+${e(u.phone)} · ${e(cap(u.role))}</span></div></form>
+      <div class="card" style="margin-top:16px"><h3>Email <span class="small muted">(optional)</span> ${u.email_verified ? vbadge : ''}</h3><p class="small muted">Sign-in codes always go to your WhatsApp. Add an email to also get codes, receipts and alerts there.</p>
+        <form id="emf" class="row"><input name="email" type="email" value="${e(u.email)}" placeholder="you@example.com" style="flex:1;min-width:200px" maxlength="200"><button class="btn sm">${u.email ? 'Change' : 'Add email'}</button></form>
+        ${u.email && !u.email_verified ? `<form id="emv" class="row" style="margin-top:10px"><input name="code" inputmode="numeric" maxlength="6" placeholder="6-digit code from your email" style="flex:1;min-width:200px" required><button class="btn sm gold">Confirm email</button></form>` : ''}</div>
       <div class="grid g3" style="margin-top:16px"><a class="card" href="/listings" data-link><h3>Browse properties</h3><span class="muted small">Find your next home or plot</span></a><a class="card" href="/invest" data-link><h3>Invest</h3><span class="muted small">Buy units in SPV-held property</span></a><a class="card" href="/request" data-link><h3>Request a property</h3><span class="muted small">Tell us your specification</span></a></div>`;
   };
   DG.dashTabs.verify = async () => {
@@ -281,6 +285,8 @@
   };
   DG.dashBind = (tab) => {
     const pf = $('#pf2'); if (pf) pf.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', pf), async () => { S.user = (await api('/me', { method: 'PATCH', body: formData(pf) })).user; toast('Profile saved.'); }); });
+    const ef = $('#emf'); if (ef) ef.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', ef), async () => { const r = await api('/me/email', { method: 'POST', body: formData(ef) }); S.user = r.user; toast(r.user.email ? `Code sent to ${r.user.email}.${r.demo_code ? ' Demo code: ' + r.demo_code : ''}` : 'Email removed.'); render(); }); });
+    const ev2 = $('#emv'); if (ev2) ev2.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', ev2), async () => { S.user = (await api('/me/email/verify', { method: 'POST', body: formData(ev2) })).user; toast('Email confirmed.'); render(); }); });
     const k = $('#kyc'); if (k) k.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', k), async () => { S.user = (await api('/me/kyc', { method: 'POST', form: new FormData(k) })).user; toast('Submitted for review.'); render(); }); });
     void tab;
   };

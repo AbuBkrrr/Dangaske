@@ -362,3 +362,16 @@ test('SPV unit resale between verified members', async () => {
   const spv = (await anon('GET', `/api/spvs/${s}`)).body;
   assert.deepEqual([spv.sold_units, spv.investors], [10, 2]); // total unchanged
 });
+
+test('email alongside WhatsApp; cron endpoint', async () => {
+  assert.equal((await buyer('POST', '/api/me/email', { email: 'not-an-email' })).status, 400);
+  const set = await buyer('POST', '/api/me/email', { email: 'Bala@Example.com' });
+  assert.deepEqual([set.body.user.email, set.body.user.email_verified], ['bala@example.com', false]);
+  assert.equal((await buyer('POST', '/api/me/email/verify', { code: '000000' })).status, 400);
+  assert.equal((await buyer('POST', '/api/me/email/verify', { code: set.body.demo_code })).body.user.email_verified, true);
+  const otp = await anon('POST', '/api/auth/request-otp', { phone: '08022222222' });
+  assert.deepEqual(otp.body.channels, ['whatsapp', 'email']); // code goes to both
+  assert.equal((await anon('POST', '/api/auth/request-otp', { phone: '08099998888' })).status, 429); // per-IP limit on code requests
+  assert.equal((await anon('GET', '/api/cron?key=x')).status, 404); // disabled without CRON_KEY
+  assert.equal(typeof app.start, 'function');
+});
