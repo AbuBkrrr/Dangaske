@@ -475,7 +475,7 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 function page(meta = {}) {
   const title = meta.title ? `${meta.title} | ${config.SITE_NAME}` : `${config.SITE_NAME} — Find, buy and own property with confidence`;
   const desc = meta.description || `${config.SITE_NAME} by ${config.COMPANY}: verified houses and land, easy-buy instalment plans and secure escrow.`;
-  const image = meta.image || `${config.BASE_URL}/icon-512.png`;
+  const image = meta.image || `${config.BASE_URL}/og-image.png`;
   const tags = [
     `<title>${esc(title)}</title>`,
     `<meta name="description" content="${esc(desc)}">`,
