@@ -42,35 +42,41 @@
   }
 
   // ---------- home ----------
-  const cityCard = (c) => `<a class="city" href="/listings?city=${encodeURIComponent(c.city)}" data-link><b>${e(c.city)}</b><span>${c.n ? `${c.n} ${c.n === 1 ? 'property' : 'properties'}${c.from_price ? ` · from <span class="notranslate">${price(c.from_price)}</span>` : ''}` : 'Coming soon'}</span></a>`;
+  const cityCard = (c) => `<a class="city" href="/listings?city=${encodeURIComponent(c.city)}" data-link><small>Nigeria</small><b>${e(c.city)}</b><span>${c.n ? `${c.n} ${c.n === 1 ? 'property' : 'properties'}${c.from_price ? ` · from <span class="notranslate">${price(c.from_price)}</span>` : ''}` : 'Coming soon'}</span></a>`;
   route(/^\/$/, async () => {
-    const [feat, recent, mk, spvs] = await Promise.all([api('/properties?featured=1&available=1&limit=4'), api('/properties?limit=8'), api('/markets'), api('/spvs')]);
-    const tabs = [['sale', 'Buy'], ['rent', 'Rent'], ['shortlet', 'Short lets'], ['new', 'New developments']];
+    const [feat, recent, mk, spvs, st] = await Promise.all([api('/properties?featured=1&available=1&limit=4'), api('/properties?limit=8'), api('/markets'), api('/spvs'), api('/stats')]);
+    const tabs = [['sale', 'Buy'], ['rent', 'Rent'], ['new', 'Off-plan'], ['commercial', 'Commercial']];
+    const stat = [[st.verified_listings, 'verified listings'], [st.professionals, 'verified professionals'], [st.cities, 'cities']].filter(([n]) => n > 0);
+    const std = [['🪪', 'Identity verification'], ['✔', 'KYC ready'], ['⚖', 'AML standards'], ['🔒', 'Data privacy'], ['💳', 'Secure payments'], ['🧾', 'Audit trail'], ['🛡', 'Escrow ready'], ['🚫', 'Fraud prevention']];
     app.innerHTML = `<div class="hero"><div class="hero-in">
+      <span class="eyebrow">A property marketplace in Kano, Nigeria</span>
       <h1>Own property the <em>easy</em>, safe way.</h1>
-      <p>Verified houses, land and investment opportunities from ${co()}. Pay in instalments, invest through an SPV, and protect every deal with escrow.</p>
-      <div class="pills" id="stabs">${tabs.map(([k, t], i) => `<button class="pill${i ? '' : ' on'}" data-k="${k}" style="border:0;cursor:pointer${i ? '' : ';background:var(--gold);color:#ffffff'}">${t}</button>`).join('')}</div>
-      <form class="search" id="hs" style="margin-top:12px"><input class="wide" name="q" placeholder="City, area or keyword" aria-label="Search">
+      <p>Verified houses, land and investment opportunities from ${co()}. Pay in instalments, co-invest through an SPV, and protect every deal with escrow.</p>
+      ${stat.length ? `<p class="hstats">${stat.map(([n, t]) => `<b>${n}</b> ${t}`).join(' &nbsp;·&nbsp; ')}</p>` : ''}
+      <div class="stabs" id="stabs">${tabs.map(([k, t], i) => `<button type="button" data-k="${k}" class="${i ? '' : 'on'}">${t}</button>`).join('')}</div>
+      <form class="search" id="hs"><input class="wide" name="q" placeholder="City, neighbourhood, landmark or keyword" aria-label="Search">
         <select name="type" aria-label="Type">${opts(S.cfg.types, '', 'Any type')}</select>
         <select name="beds" aria-label="Bedrooms">${opts([1, 2, 3, 4, 5].map((n) => [n, n + '+ beds']), '', 'Any beds')}</select>
         <input name="max" inputmode="numeric" placeholder="Max price ₦" aria-label="Maximum price">
         <button class="btn gold">Search</button></form>
-      <div class="pills"><a class="pill" href="/listings?easy=1" data-link>Easy-buy properties</a><a class="pill" href="/invest" data-link>Invest from one unit</a><a class="pill" href="/listings?verified=1" data-link>✔ Verified only</a><a class="pill" href="/request" data-link>Can't find it? Request it</a></div>
+      <div class="hlinks"><a href="/listings" data-link>⚙ Advanced filters</a><a href="/map" data-link>🗺 Map search</a><a href="/dashboard?tab=saved" data-link>🔔 Saved searches</a><a href="/listings?easy=1" data-link>Easy-buy</a><a href="/invest" data-link>Invest</a><span>Verified listings · Escrow ready · Fraud protection</span></div>
     </div></div>
-    ${feat.items.length ? `<section><div class="spread"><h2>Featured properties</h2><a href="/listings?featured=1" data-link>View all →</a></div>${cards(feat.items, '')}</section>` : ''}
-    <section><div class="spread"><h2>Recently added</h2><a href="/listings" data-link>Browse marketplace →</a></div>${cards(recent.items, 'No properties yet. Check back soon.')}</section>
-    <section><div class="spread"><h2>Featured cities</h2><a href="/markets" data-link>Explore markets →</a></div><div class="grid g4 keep2">${mk.featured.slice(0, 8).map(cityCard).join('')}</div></section>
+    <section class="sec"><span class="kicker">Featured properties</span><div class="spread"><h2>Verified inventory, curated for discovery.</h2><a href="/listings?featured=1" data-link>View all properties →</a></div>${feat.items.length ? cards(feat.items, '') : '<p class="muted">Verified listings appear here as inventory is published to the marketplace.</p>'}</section>
+    <section class="sec"><span class="kicker">Recently added</span><div class="spread"><h2>Newly published listings.</h2><a href="/listings" data-link>Browse marketplace →</a></div>${cards(recent.items, 'No properties yet. Check back soon.')}</section>
+    <section class="sec"><span class="kicker">Featured cities</span><div class="spread"><h2>Cross-city markets, one platform.</h2><a href="/markets" data-link>Explore markets →</a></div><div class="grid g4 keep2">${mk.featured.slice(0, 8).map(cityCard).join('')}</div></section>
     ${spvs.some((s) => s.status === 'open') ? `<section class="band"><div><h2>Invest in property from one unit</h2><p>Co-own income-producing property through a dedicated SPV. Open now: ${e(spvs.find((s) => s.status === 'open').title)}.</p></div><a class="btn gold" href="/invest" data-link>See investment offers</a></section>` : ''}
-    <section><h2>Why ${site()}</h2><div class="grid g4">
-      <div class="card"><h3>✔ Verified by design</h3><p class="muted">Listings and professionals carry a badge only after our checks are complete.</p></div>
-      <div class="card"><h3>🛡 Escrow-ready</h3><p class="muted">Your money is held and released only when you confirm handover.</p></div>
-      <div class="card"><h3>📅 Easy-buy plans</h3><p class="muted">Spread the cost with a deposit and monthly instalments.</p></div>
-      <div class="card"><h3>🧾 Accountable</h3><p class="muted">Offers, payments and admin actions leave an audit trail for dispute support.</p></div></div>
-      <p style="margin-top:14px"><a href="/trust" data-link>Visit the trust centre →</a></p></section>
-    <section class="band"><div><h2>Take ${e(S.cfg.site_name)} with you</h2><p>Install the app on your phone for instant alerts on new listings and sales.</p></div><div class="row"><button class="btn gold" data-act="install">Install the app</button><a class="btn light" href="/request" data-link>Request a property</a></div></section>`;
+    <section class="sec"><span class="kicker">Why ${site()}</span><h2>Trusted infrastructure for property deals.</h2><div class="grid g4">
+      <div class="card"><h3>✔ Verified listings</h3><p class="muted">Title, media and lister checks are completed before the badge appears.</p></div>
+      <div class="card"><h3>🪪 Verified professionals</h3><p class="muted">Agents, agencies and developers pass identity checks.</p></div>
+      <div class="card"><h3>🛡 Secure escrow</h3><p class="muted">Your money is held and released only when you confirm handover.</p></div>
+      <div class="card"><h3>🚫 Fraud protection</h3><p class="muted">Monitoring, reporting and rapid suspension of bad actors.</p></div></div>
+      <p style="margin-top:14px"><a href="/trust" data-link>Trust &amp; safety →</a></p></section>
+    <section class="sec"><h2 class="center">Built to meet high standards</h2><p class="muted center">Security, compliance and transparency are engineered into every transaction — not outsourced to a badge.</p>
+      <div class="grid g4 keep2 std">${std.map(([i, t]) => `<div class="card center"><div class="sicon">${i}</div><b>${t}</b></div>`).join('')}</div></section>
+    <section class="band"><div><h2>Take ${site()} with you</h2><p>Get the Android app for instant alerts on new listings, inspections and sales.</p></div><div class="row"><button class="btn gold" data-act="install">Get the Android app</button><a class="btn light" href="/request" data-link>Request a property</a></div></section>`;
     let mode = 'sale';
-    app.querySelectorAll('#stabs button').forEach((b) => b.addEventListener('click', () => { mode = b.dataset.k; app.querySelectorAll('#stabs button').forEach((x) => { const on = x === b; x.style.background = on ? 'var(--gold)' : ''; x.style.color = on ? '#ffffff' : ''; }); }));
-    $('#hs').addEventListener('submit', (ev) => { ev.preventDefault(); go('/listings?' + DG.cleanQuery({ ...formData(ev.target), ...(mode === 'new' ? { new_dev: 1 } : { purpose: mode }) })); });
+    app.querySelectorAll('#stabs button').forEach((b) => b.addEventListener('click', () => { mode = b.dataset.k; app.querySelectorAll('#stabs button').forEach((x) => x.classList.toggle('on', x === b)); }));
+    $('#hs').addEventListener('submit', (ev) => { ev.preventDefault(); go('/listings?' + DG.cleanQuery({ ...formData(ev.target), ...(mode === 'new' ? { new_dev: 1 } : mode === 'commercial' ? { type: 'commercial' } : { purpose: mode }) })); });
   });
 
   // ---------- markets, projects ----------
@@ -219,7 +225,7 @@
   // ---------- company pages ----------
   const doc = (title, html) => { app.innerHTML = `<article class="doc">${h1(title)}${html}</article>`; };
   route(/^\/about$/, async () => doc(`About ${e(S.cfg.site_name)}`, `
-    <p>${site()} is the online property marketplace of ${co()}. We connect buyers, tenants, investors and accredited property professionals, and we put the safeguards of a careful transaction — verification, escrow and a clear paper trail — into the product itself.</p>
+    <p>${site()} is the online property marketplace of Kano-based ${co()}. We connect buyers, tenants, investors and accredited property professionals, and we put the safeguards of a careful transaction — verification, escrow and a clear paper trail — into the product itself.</p>
     <h2>Mission</h2><p>Make owning property simple, affordable and safe.</p>
     <h2>Vision</h2><p>A market where every listing can be trusted and every payment is protected.</p>
     <h2>What we offer</h2><ul><li><b>Marketplace</b> — homes, land, commercial property and new developments, with verified badges.</li><li><b>Easy-buy plans</b> — a deposit and monthly instalments.</li><li><b>Escrow</b> — funds released only when the buyer confirms handover.</li><li><b>SPV investment</b> — co-own property by buying units in a dedicated vehicle.</li><li><b>Property requests</b> — tell us what you need and let agents come to you.</li><li><b>Professionals directory</b> — agents, agencies, developers and service providers.</li></ul>
@@ -237,7 +243,7 @@
     <p class="muted small">Address, contact details and full galleries are not part of the public API. For write access or a data partnership, <a href="/contact" data-link>contact us</a>.</p>`));
   const reviewNote = '';
   route(/^\/legal\/terms$/, async () => doc('Terms of use', `${reviewNote}
-    <p>These terms govern your use of ${site()}, operated by ${co()} (“we”). By creating an account you agree to them.</p>
+    <p>These terms govern your use of ${site()}, (“we”). By creating an account you agree to them.</p>
     <h2>1. Accounts</h2><p>You sign in with your phone number and a one-time code. You are responsible for activity on your account and must give accurate information, including during identity checks.</p>
     <h2>2. Listings</h2><p>Listers must have the right to market a property and must describe it truthfully. We may edit, decline, unpublish or remove listings, and suspend accounts that break these terms.</p>
     <h2>3. Fees</h2><p>Fees for viewing full details, escrow and other services are shown before you pay. Fees for viewing full details are non-refundable once the details have been shown.</p>
@@ -247,7 +253,7 @@
     <h2>7. Liability</h2><p>Verification reduces risk but is not a warranty of title or value. To the extent the law allows, we are not liable for losses arising from dealings conducted outside the platform.</p>
     <h2>8. Governing law</h2><p>These terms are governed by the laws of the Federal Republic of Nigeria.</p>`));
   route(/^\/legal\/privacy$/, async () => doc('Privacy policy', `
-    <p>This policy explains how ${co()} handles personal data on ${site()}, in line with the Nigeria Data Protection Act.</p>
+    <p>This policy explains how ${site()} handles personal data on ${site()}, in line with the Nigeria Data Protection Act.</p>
     <h2>What we collect</h2><ul><li>Your phone number, name and profile details.</li><li>Identity documents you submit for verification.</li><li>Listings, requests, messages and reports you create.</li><li>Payment references and amounts (card details are handled by our payment partner, not stored by us).</li><li>Device push-notification tokens, if you turn notifications on.</li></ul>
     <h2>How we use it</h2><p>To run your account, verify identities, process payments and escrow, prevent fraud, send alerts you asked for and meet legal obligations.</p>
     <h2>Sharing</h2><p>With payment and messaging providers that process data for us, with the other party to a transaction where needed, and with authorities where the law requires. We do not sell personal data.</p>

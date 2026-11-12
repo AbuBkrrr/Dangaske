@@ -1,0 +1,13 @@
+# Only for servers where nothing else uses ports 80/443. Adds automatic HTTPS in front of the site.
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.caddy.yml up -d --build
+services:
+  caddy:
+    image: caddy:2
+    container_name: dangaske-caddy
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+volumes:
+  caddy_data:

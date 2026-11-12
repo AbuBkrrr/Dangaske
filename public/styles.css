@@ -202,3 +202,22 @@ pre.code { background: #0e0e40; color: #dfe2f7; padding: 14px; border-radius: 10
 .pill.on { background: var(--gold); }
 .bell b { color: #fff; }
 .brand span { white-space: nowrap; font-size: 1.12rem; } .nav { gap: 14px; }
+
+/* --- v4: dark navy design (after the Landonova reference) --- */
+:root { --navy: #0a1233; --navy-2: #121c4a; --bg: #f4f6fb; }
+.top { background: var(--navy); } .lang, .kbtn { background: var(--navy-2); border-color: #26336e; }
+.hero { background: radial-gradient(900px 380px at 85% -10%, #26337a 0, transparent 60%), var(--navy); padding: 54px 16px 46px; }
+.hero h1 { max-width: 16ch; } .hero h1 em { color: #ff6b73; }
+.eyebrow { display: inline-block; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.18); color: #dfe4ff; font-size: .8rem; padding: 4px 12px; border-radius: 99px; margin-bottom: 16px; }
+.hstats { color: #c9d0f5; font-size: .95rem; margin-top: 18px; } .hstats b { color: #fff; font: 700 1.1rem Georgia, serif; }
+.stabs { display: flex; margin-top: 22px; background: rgba(255,255,255,.08); border-radius: 12px 12px 0 0; padding: 6px 6px 0; max-width: 560px; gap: 4px; }
+.stabs button { flex: 1; border: 0; background: transparent; color: #dfe4ff; padding: 10px 6px; border-radius: 8px 8px 0 0; font: 600 .92rem inherit; cursor: pointer; }
+.stabs button.on { background: #fff; color: var(--navy); }
+.search { margin-top: 0; border-radius: 0 14px 14px 14px; }
+.hlinks { display: flex; gap: 8px 18px; flex-wrap: wrap; align-items: center; margin-top: 14px; font-size: .85rem; } .hlinks a { color: #dfe4ff; text-decoration: none; } .hlinks a:hover { color: #fff; text-decoration: underline; } .hlinks span { margin-left: auto; color: #9aa6e6; }
+.sec { margin: 54px 0; } .kicker { display: block; color: var(--gold); font-size: .76rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 6px; }
+.sec h2 { font-size: clamp(1.4rem, 3vw, 2rem); }
+.city { background: linear-gradient(160deg, #1d2a73, var(--navy)); min-height: 130px; } .city small { text-transform: uppercase; letter-spacing: .12em; font-size: .66rem; color: #ff8a91; }
+.std .card { padding: 16px 10px; } .sicon { font-size: 1.5rem; margin-bottom: 4px; }
+.band { background: linear-gradient(120deg, var(--navy), #1d2a73); } .foot { background: var(--navy); }
+body { background: var(--bg); }

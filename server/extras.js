@@ -148,6 +148,16 @@ module.exports = ({ publicUser }) => {
     res.json({ ...profile(u), properties: listings.search({ owner: u.id, limit: 24 }, req.user).items });
   });
 
+  r.get('/stats', (_req, res) => {
+    const n = (sql) => db.prepare(sql).get().n;
+    res.json({
+      verified_listings: n("SELECT COUNT(*) AS n FROM properties WHERE status = 'active' AND verified = 1"),
+      listings: n("SELECT COUNT(*) AS n FROM properties WHERE status = 'active'"),
+      professionals: n("SELECT COUNT(*) AS n FROM users WHERE role IN ('agent','admin') AND verified = 1 AND suspended = 0"),
+      cities: n("SELECT COUNT(DISTINCT lower(city)) AS n FROM properties WHERE status = 'active' AND city != ''"),
+    });
+  });
+
   // ---------- markets ----------
   r.get('/markets', (_req, res) => {
     const rows = db

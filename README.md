@@ -2,7 +2,7 @@
 
 Property marketplace for **Dangaske Real Estate & Property Services Ltd** (RC 8511141) — dangaskerealestate.com.ng.
 
-**Deploying to WhoGoHost? Follow [docs/DEPLOY-WHOGOHOST.md](docs/DEPLOY-WHOGOHOST.md).**
+**Deploying on a VPS with Docker? Follow [docs/DEPLOY-VPS-DOCKER.md](docs/DEPLOY-VPS-DOCKER.md).** (Shared hosting: [docs/DEPLOY-WHOGOHOST.md](docs/DEPLOY-WHOGOHOST.md).)
 The site name is set with `SITE_NAME` in `.env`, so it can be changed in one place.
 
 ## Features

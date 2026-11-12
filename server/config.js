@@ -15,7 +15,7 @@ const config = {
   PORT: Number(env.PORT) || 3000,
   BASE_URL: (env.BASE_URL || `http://localhost:${Number(env.PORT) || 3000}`).replace(/\/$/, ''),
   SITE_NAME: env.SITE_NAME || 'Dangaske Real Estate',
-  COMPANY: env.COMPANY_NAME || 'Dangaske Real Estate & Property Services Ltd',
+  COMPANY: env.COMPANY_NAME || 'Dangaske Real Estate',
   RC_NUMBER: env.RC_NUMBER || '8511141',
   SESSION_SECRET: env.SESSION_SECRET || 'dev-secret-change-me',
   DATA_DIR: path.resolve(env.DATA_DIR || path.join(__dirname, '..', 'data')),
