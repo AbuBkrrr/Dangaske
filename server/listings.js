@@ -7,6 +7,37 @@ const push = require('./push');
 const social = require('./social');
 
 const hooks = { onPublish: [] };
+
+// Approximate city centres, used to measure how far a plot of land is from the city.
+const CITIES = { kano: [12.0022, 8.592], kaduna: [10.5105, 7.4165], abuja: [9.0765, 7.3986], lagos: [6.5244, 3.3792], 'port harcourt': [4.8156, 7.0498], ibadan: [7.3775, 3.947], katsina: [12.9908, 7.6018], enugu: [6.4584, 7.5464], jos: [9.8965, 8.8583], maiduguri: [11.8333, 13.15], zaria: [11.0855, 7.7199], sokoto: [13.0059, 5.2476], 'benin city': [6.335, 5.6037], warri: [5.516, 5.75], owerri: [5.4836, 7.0333], abeokuta: [7.1475, 3.3619], ilorin: [8.4966, 4.5421], bauchi: [10.3158, 9.8442], gombe: [10.2897, 11.1673], yola: [9.2035, 12.4954], minna: [9.6139, 6.5569], lokoja: [7.8023, 6.7333], makurdi: [7.7337, 8.5214], calabar: [4.9757, 8.3417], uyo: [5.0377, 7.9128], akure: [7.2571, 5.2058], osogbo: [7.7827, 4.5418], abakaliki: [6.3249, 8.1137], awka: [6.2104, 7.0741], asaba: [6.1984, 6.7319], umuahia: [5.5265, 7.4906], dutse: [11.7561, 9.3389], 'birnin kebbi': [12.4539, 4.1975], gusau: [12.1704, 6.6641], jalingo: [8.8937, 11.3596], damaturu: [11.7469, 11.9608], lafia: [8.4939, 8.5153], yenagoa: [4.9247, 6.2642], 'ado-ekiti': [7.6211, 5.2214] };
+const STATE_CITY = { 'fct abuja': 'abuja', rivers: 'port harcourt', oyo: 'ibadan', plateau: 'jos', borno: 'maiduguri', edo: 'benin city', kwara: 'ilorin', niger: 'minna', delta: 'asaba', ogun: 'abeokuta', imo: 'owerri', abia: 'umuahia', anambra: 'awka', adamawa: 'yola', benue: 'makurdi', kogi: 'lokoja', 'cross river': 'calabar', 'akwa ibom': 'uyo', ondo: 'akure', osun: 'osogbo', ekiti: 'ado-ekiti', ebonyi: 'abakaliki', jigawa: 'dutse', kebbi: 'birnin kebbi', zamfara: 'gusau', taraba: 'jalingo', yobe: 'damaturu', nasarawa: 'lafia', bayelsa: 'yenagoa' };
+
+function haversineKm(a, b) {
+  const r = (x) => (x * Math.PI) / 180, dLat = r(b[0] - a[0]), dLng = r(b[1] - a[1]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(r(a[0])) * Math.cos(r(b[0])) * Math.sin(dLng / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(h));
+}
+
+/** Distance of a plot from its city centre: from the map pin when there is one, else the lister's own figure. */
+function landDistanceKm(p) {
+  const city = String(p.city || '').trim().toLowerCase(), state = String(p.state || '').trim().toLowerCase();
+  const centre = CITIES[city] || CITIES[STATE_CITY[state] || state];
+  if (p.lat != null && p.lng != null && centre) return haversineKm([p.lat, p.lng], centre);
+  return p.distance_km > 0 ? p.distance_km : null;
+}
+
+/** Inspection fee for a listing, from the bands the admin sets in Settings. */
+function inspectionFee(p) {
+  const g = (k) => int(getSetting(k));
+  if (p.type === 'land') {
+    const km = landDistanceKm(p);
+    const base = g('insp_land_base');
+    if (km == null) return base;
+    return Math.max(base, Math.min(g('insp_land_max') || Infinity, Math.round((base + g('insp_land_km') * km) / 100) * 100));
+  }
+  if (p.purpose === 'sale') return p.price < g('insp_sale_t1') ? g('insp_sale_f1') : p.price < g('insp_sale_t2') ? g('insp_sale_f2') : g('insp_sale_f3');
+  return p.price < g('insp_rent_limit') ? g('insp_rent_low') : g('insp_rent_high'); // rent and short-let
+}
 const PURPOSES = ['sale', 'rent', 'shortlet'];
 const TYPES = ['house', 'duplex', 'bungalow', 'apartment', 'land', 'commercial'];
 
@@ -45,6 +76,7 @@ function cleanFields(input, { partial = false } = {}) {
     if (has(k)) { const n = Number(input[k]); out[k] = input[k] !== '' && Number.isFinite(n) && Math.abs(n) <= lim ? n : null; }
   }
   set('new_dev', input.new_dev === true || /^(1|true|yes|y)$/i.test(String(input.new_dev)) ? 1 : 0);
+  if (has('distance_km')) { const n = Number(input.distance_km); out.distance_km = n > 0 ? Math.min(n, 2000) : null; }
   if (has('unlock_fee')) out.unlock_fee = input.unlock_fee === '' ? null : int(input.unlock_fee, 1e7);
   return out;
 }
@@ -120,13 +152,13 @@ function present(p, user) {
     cover: cover ? mediaUrl(cover.file) : '', cover_thumb: cover ? mediaUrl(cover.thumb) : '',
     image_count: counts.images || 0, video_count: counts.videos || 0,
     excerpt: p.description.length > 160 ? p.description.slice(0, 160).trimEnd() + '…' : p.description,
-    unlock_fee: fee, locked: !full, can_manage: manage,
+    unlock_fee: fee, locked: !full, can_manage: manage, inspection_fee: inspectionFee(p),
   };
   if (full) {
     const owner = db.prepare('SELECT name, role FROM users WHERE id = ?').get(p.owner_id);
     Object.assign(out, {
       description: p.description, address: p.address, features: p.features, title_doc: p.title_doc,
-      contact_phone: p.contact_phone, map_url: p.map_url, lat: p.lat, lng: p.lng, tour_url: p.tour_url,
+      contact_phone: p.contact_phone, map_url: p.map_url, distance_km: p.distance_km, lat: p.lat, lng: p.lng, tour_url: p.tour_url,
       listed_by: owner ? owner.name || (owner.role === 'admin' ? config.COMPANY : 'Agent') : '',
       media: db.prepare('SELECT * FROM media WHERE property_id = ? ORDER BY id').all(p.id).map((m) => ({
         id: m.id, kind: m.kind, status: m.status, url: mediaUrl(m.file), thumb: mediaUrl(m.thumb),
@@ -233,7 +265,7 @@ function removeProperty(p) {
 }
 
 module.exports = {
-  hooks, PURPOSES, TYPES, int, str, naira, place, propertyUrl,
+  hooks, inspectionFee, landDistanceKm, PURPOSES, TYPES, int, str, naira, place, propertyUrl,
   createProperty, updateProperty, getProperty, mustGet, canManage, unlockFee, hasUnlocked,
   present, search, publish, submit, markSold, removeProperty,
 };

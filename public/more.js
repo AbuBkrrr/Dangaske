@@ -14,6 +14,25 @@
   if (refParam) store.set('ref', refParam.slice(0, 12));
   DG.ref = () => store.get('ref', '');
 
+  /** Date calendar + hourly time slots (taken or too-soon times are disabled). Returns a function giving 'YYYY-MM-DDTHH:MM'. */
+  function slotPicker(box, propertyId) {
+    const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    box.innerHTML = `<div><label>Date</label><input type="date" name="date" min="${today}" required></div><div><label>Time <span class="small muted">(8am–5pm)</span></label><select name="time" disabled><option value="">Choose a date first</option></select></div>`;
+    const d = $('[name=date]', box), t = $('[name=time]', box);
+    d.addEventListener('change', async () => {
+      if (!d.value) return;
+      t.disabled = true; t.innerHTML = '<option value="">Loading…</option>';
+      const r = await api(`/properties/${propertyId}/slots?date=${d.value}`).catch(() => ({ booked: [] }));
+      const soon = Date.now() + 2 * 3600e3, list = [];
+      for (let h = 8; h <= 17; h++) {
+        const hh = String(h).padStart(2, '0') + ':00', taken = r.booked.includes(hh), past = new Date(`${d.value}T${hh}`).getTime() < soon;
+        list.push(`<option value="${hh}"${taken || past ? ' disabled' : ''}>${hh}${taken ? ' — booked' : past ? ' — too soon' : ''}</option>`);
+      }
+      t.innerHTML = '<option value="">Choose a time</option>' + list.join(''); t.disabled = false;
+    });
+    return () => (d.value && t.value ? `${d.value}T${t.value}` : '');
+  }
+
   // ---------- card actions ----------
   Object.assign(DG.ACTIONS, {
     fav: (b) => { const run = () => busy(b, async () => { const r = await api(`/properties/${b.dataset.id}/favourite`, { method: 'POST' }); b.textContent = b.dataset.long ? (r.fav ? '♥ Saved' : '♡ Save') : r.fav ? '♥' : '♡'; toast(r.fav ? 'Saved to your favourites.' : 'Removed from favourites.'); }); if (!needLogin(run)) run(); },
@@ -39,13 +58,13 @@
 
   // ---------- property page extras ----------
   DG.propertyExtras = (p) => {
-    const fee = S.cfg.inspection_fee, sold = p.status === 'sold';
+    const fee = p.inspection_fee, sold = p.status === 'sold';
     const min = new Date(Date.now() + 3 * 3600 * 1000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
     $('#px').innerHTML = `${!sold && !p.can_manage ? `<div class="card" style="border-color:var(--gold-2)"><h3>Book an inspection</h3>
-        <form id="insp" class="grid"><div><label>Date and time <span class="small muted">(8am–6pm)</span></label><input type="datetime-local" name="slot" min="${min}" required></div>
+        <form id="insp" class="grid"><div id="sp" class="grid"></div>
         <div><label>Note <span class="small muted">(optional)</span></label><input name="note" maxlength="300" placeholder="e.g. coming with my surveyor"></div>
         <button class="btn gold block">${fee ? `Pay <span class="notranslate">${money(fee)}</span> to confirm` : 'Confirm booking'}</button></form>
-        <p class="small muted">${fee ? `The inspection fee confirms your appointment${p.locked ? ', unlocks the full address' : ''} and is <b>deducted from the price</b> if you buy through escrow.` : 'The agent will be notified at once.'}</p></div>` : ''}
+        <p class="small muted">${fee ? `The inspection fee confirms your appointment${p.locked ? ', unlocks the full address' : ''} and is <b>deducted from the price</b> if you buy through escrow.${p.type === 'land' ? ' For land the fee depends on the distance from the city centre.' : ''}` : 'The agent will be notified at once.'}</p></div>` : ''}
       <div class="row"><button class="btn sm ghost" data-act="fav" data-long="1" data-id="${p.id}">${p.fav ? '♥ Saved' : '♡ Save'}</button><button class="btn sm ghost" data-act="cmp" data-id="${p.id}">⇄ Compare</button>
         ${!p.can_manage && !p.locked ? `<button class="btn sm" id="chatbtn">💬 Message agent</button>` : ''}</div>
       ${!sold && !p.can_manage && S.cfg.title_check_fee ? `<div class="card"><h3>Title verification report</h3><p class="small muted">We search the land registry for this property and send you a written report on ownership and encumbrances.</p><button class="btn sm block" id="tcbtn">Order for <span class="notranslate">${money(S.cfg.title_check_fee)}</span></button></div>` : ''}`;
@@ -56,7 +75,8 @@
       ${p.tour_url ? `<p style="margin-top:14px"><a class="btn sm" href="${e(p.tour_url)}" target="_blank" rel="noopener">▶ Open virtual tour</a></p>` : p.has_tour && p.locked ? '<p class="small muted">🎥 A virtual tour is available once unlocked.</p>' : ''}
       ${p.lat != null && p.lng != null ? `<h3 style="margin-top:14px">Location</h3><iframe class="osm" loading="lazy" title="Map" src="https://www.openstreetmap.org/export/embed.html?bbox=${p.lng - d}%2C${p.lat - d}%2C${p.lng + d}%2C${p.lat + d}&amp;layer=mapnik&amp;marker=${p.lat}%2C${p.lng}"></iframe>` : p.approx && p.locked ? '<p class="small muted">📍 The exact map location is shown once unlocked.</p>' : ''}`;
     const f = $('#insp');
-    if (f) f.addEventListener('submit', (ev) => { ev.preventDefault(); const run = () => busy($('button', f), async () => { const r = await payTo(`/properties/${p.id}/inspections`, formData(f)); if (r.confirmed) { toast('Inspection confirmed.'); go('/dashboard?tab=inspections'); } }); if (!needLogin(run)) run(); });
+    const getSlot = f ? slotPicker($('#sp'), p.id) : null;
+    if (f) f.addEventListener('submit', (ev) => { ev.preventDefault(); const run = () => busy($('button', f), async () => { const slot = getSlot(); if (!slot) { toast('Pick a date and a time from the calendar.', true); return; } const r = await payTo(`/properties/${p.id}/inspections`, { ...formData(f), slot }); if (r.confirmed) { toast('Inspection confirmed.'); go('/dashboard?tab=inspections'); } }); if (!needLogin(run)) run(); });
     const cb = $('#chatbtn');
     if (cb) cb.addEventListener('click', () => { const run = () => busy(cb, async () => { const r = await api(`/properties/${p.id}/chat`, { method: 'POST' }); go(`/dashboard?tab=messages&t=${r.id}`); }); if (!needLogin(run)) run(); });
     const tc = $('#tcbtn');
@@ -97,7 +117,7 @@
     if (!rows.length) return '<p class="muted">No inspections yet. Book one from any listing.</p>';
     return `<div class="tablewrap"><table><tr><th>When</th><th>Property</th><th>With</th><th>Status</th><th></th></tr>${rows.map((i) => {
       const ok = i.status === 'confirmed', acts = [];
-      if (ok) acts.push(`<button class="btn sm ghost" data-ires="${i.id}">Reschedule</button>`);
+      if (ok) acts.push(`<button class="btn sm ghost" data-ires="${i.id}" data-prop="${i.property_id}">Reschedule</button>`);
       if (ok && i.role === 'agent') acts.push(`<button class="btn sm" data-ist="${i.id}" data-s="completed">Done</button>`, `<button class="btn sm ghost" data-ist="${i.id}" data-s="no_show">No-show</button>`);
       if (ok || (i.status === 'awaiting_payment' && i.role === 'buyer')) acts.push(`<button class="btn sm ghost" data-ist="${i.id}" data-s="cancelled">Cancel</button>`);
       return `<tr><td class="nowrap"><b>${when(i.slot)}</b></td><td><a href="/p/${i.property_id}" data-link>${e(i.property_title)}</a>${ok && i.role === 'buyer' && i.address ? `<br><span class="small">${e(i.address)}</span>` : ''}${i.note ? `<br><span class="small muted">“${e(i.note)}”</span>` : ''}</td>
@@ -139,7 +159,12 @@
     if (tab === 'messages') bindChat();
     const on = (sel, fn) => app.querySelectorAll(sel).forEach((b) => b.addEventListener('click', () => busy(b, async () => { if ((await fn(b)) !== false) render(); })));
     on('[data-ist]', (b) => (b.dataset.s !== 'cancelled' || confirm('Cancel this inspection?') ? api(`/inspections/${b.dataset.ist}/status`, { method: 'POST', body: { status: b.dataset.s } }) : false));
-    on('[data-ires]', (b) => { const slot = prompt('New date and time (YYYY-MM-DD HH:MM, between 08:00 and 18:00):'); return slot ? api(`/inspections/${b.dataset.ires}/reschedule`, { method: 'POST', body: { slot: slot.trim().replace(' ', 'T') } }) : false; });
+    on('[data-ires]', (b) => {
+      const m = modal('<h2>Reschedule inspection</h2><div id="rsp" class="grid"></div><p><button class="btn block" id="rgo">Confirm new time</button></p>');
+      const get = slotPicker($('#rsp', m), b.dataset.prop);
+      $('#rgo', m).addEventListener('click', () => { const slot = get(); if (!slot) return toast('Pick a date and a time.', true); busy($('#rgo', m), async () => { await api(`/inspections/${b.dataset.ires}/reschedule`, { method: 'POST', body: { slot } }); closeModal(); toast('Inspection rescheduled.'); render(); }); });
+      return false;
+    });
     on('[data-dels]', (b) => api('/saved-searches/' + b.dataset.dels, { method: 'DELETE' }));
     on('[data-deld]', (b) => (confirm('Delete this document?') ? api('/documents/' + b.dataset.deld, { method: 'DELETE' }) : false));
     const df = $('#docf'); if (df) df.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', df), async () => { await api('/documents', { method: 'POST', form: new FormData(df) }); toast('Document saved.'); render(); }); });

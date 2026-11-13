@@ -416,7 +416,7 @@ admin.put('/settings', (req, res) => {
         v = JSON.stringify(Object.fromEntries(Object.entries(r).filter(([k, n]) => /^[A-Z]{3}$/.test(k) && Number(n) > 0).slice(0, 8)));
       } catch { continue; }
     }
-    if (['inspection_fee', 'title_check_fee', 'referral_reward', 'request_fee'].includes(key)) v = String(listings.int(v, 1e8));
+    if (['inspection_fee', 'title_check_fee', 'referral_reward', 'request_fee'].includes(key) || key.startsWith('insp_')) v = String(listings.int(v, 1e8));
     if (key === 'secondary_market') v = /^(1|true|on|yes)$/i.test(v) ? '1' : '0';
     if (key === 'default_unlock_fee') v = String(listings.int(v, 1e7));
     if (key === 'escrow_fee_pct') v = String(Math.min(Math.max(Number(v) || 0, 0), 20));

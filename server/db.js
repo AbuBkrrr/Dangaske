@@ -225,6 +225,7 @@ addColumn('properties', 'lng', 'REAL');
 addColumn('properties', 'nearby', "TEXT NOT NULL DEFAULT ''");
 addColumn('properties', 'tour_url', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'referred_by', 'INTEGER');
+addColumn('properties', 'distance_km', 'REAL');
 addColumn('users', 'email', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'email_verified', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('installments', 'reminded_at', 'TEXT');
@@ -235,12 +236,15 @@ const audit = (actorId, action, detail = '') =>
   db.prepare('INSERT INTO audit(actor_id, action, detail) VALUES(?,?,?)').run(actorId || null, String(action).slice(0, 120), String(detail).slice(0, 500));
 
 const DEFAULT_SETTINGS = {
-  default_unlock_fee: '1000', // naira charged to view full details of a listing
+  default_unlock_fee: '0',    // view-details fee: removed (kept at 0). Pay-to-view code stays dormant.
   escrow_fee_pct: '1.5',
   support_whatsapp: '2348037572052',
   phones: '+234 803 757 2052, +234 816 130 4050',
   request_fee: '2000',        // paid by a buyer/agent to publish a property request (0 = free)
-  inspection_fee: '5000',     // paid to confirm an inspection appointment; credited towards the purchase
+  inspection_fee: '5000',     // fallback when no price band applies
+  insp_rent_limit: '2000000', insp_rent_low: '3000', insp_rent_high: '5000',            // rent and short-let: below limit / at or above
+  insp_sale_t1: '5000000', insp_sale_f1: '3000', insp_sale_t2: '50000000', insp_sale_f2: '5000', insp_sale_f3: '10000', // sale bands
+  insp_land_base: '3000', insp_land_km: '200', insp_land_max: '25000',                // land: base + per km from the city centre, capped     // paid to confirm an inspection appointment; credited towards the purchase
   title_check_fee: '25000',   // title verification report
   referral_reward: '0',       // naira paid to a referrer when the person they invited buys
   secondary_market: '0',      // 1 = investors may resell SPV units to other verified members
@@ -266,6 +270,13 @@ if (!db.prepare('SELECT 1 FROM plans LIMIT 1').get()) {
   ins.run('Quick 6', 6, 40, 0);
   ins.run('Steady 12', 12, 30, 5);
   ins.run('Flexi 24', 24, 20, 12);
+}
+
+// One-time: the view-details fee was removed, so clear any value saved earlier.
+if (!db.prepare("SELECT 1 FROM settings WHERE key = 'unlock_fee_removed'").get()) {
+  db.prepare("INSERT INTO settings(key,value) VALUES('default_unlock_fee','0') ON CONFLICT(key) DO UPDATE SET value='0'").run();
+  db.prepare("INSERT INTO settings(key,value) VALUES('unlock_fee_removed','1')").run();
+  db.prepare('UPDATE properties SET unlock_fee = NULL').run();
 }
 
 module.exports = { db, addColumn, audit, getSetting, setSetting, allSettings, DEFAULT_SETTINGS };

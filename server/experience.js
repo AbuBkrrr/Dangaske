@@ -121,6 +121,18 @@ function parseSlot(v) {
   return s;
 }
 
+const slotTaken = (propertyId, agentId, slot, excludeId = 0) =>
+  Boolean(db.prepare("SELECT 1 FROM inspections WHERE status = 'confirmed' AND slot = ? AND (property_id = ? OR agent_id = ?) AND id != ?").get(slot, propertyId, agentId, excludeId));
+
+// Times already taken on a day, so the calendar can grey them out.
+r.get('/properties/:id/slots', (req, res) => {
+  const p = listings.mustGet(req.params.id);
+  const date = String(req.query.date || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new HttpError(400, 'Choose a date.');
+  const rows = db.prepare("SELECT slot FROM inspections WHERE status = 'confirmed' AND slot LIKE ? AND (property_id = ? OR agent_id = ?)").all(`${date}T%`, p.id, p.owner_id);
+  res.json({ booked: [...new Set(rows.map((x) => x.slot.slice(11, 16)))] });
+});
+
 function confirmInspection(i, after) {
   db.prepare("UPDATE inspections SET status = 'confirmed' WHERE id = ?").run(i.id);
   // The buyer needs the address to attend, so a paid inspection also unlocks the listing.
@@ -146,12 +158,11 @@ r.post('/properties/:id/inspections', requireAuth, async (req, res) => {
   if (p.status !== 'active') throw new HttpError(409, 'This property is no longer available.');
   if (p.owner_id === req.user.id) throw new HttpError(400, 'This is your own listing.');
   const slot = parseSlot(req.body.slot);
-  const clash = db.prepare("SELECT 1 FROM inspections WHERE property_id = ? AND slot = ? AND status = 'confirmed'").get(p.id, slot);
-  if (clash) throw new HttpError(409, 'That time is already booked. Please choose another.');
+  if (slotTaken(p.id, p.owner_id, slot)) throw new HttpError(409, 'That time is already booked. Please choose another.');
   const open = db.prepare("SELECT id FROM inspections WHERE property_id = ? AND user_id = ? AND status = 'confirmed'").get(p.id, req.user.id);
   if (open) throw new HttpError(409, 'You already have a confirmed inspection for this property. You can reschedule it from your dashboard.');
   db.prepare("DELETE FROM inspections WHERE property_id = ? AND user_id = ? AND status = 'awaiting_payment'").run(p.id, req.user.id);
-  const fee = int(getSetting('inspection_fee'));
+  const fee = listings.inspectionFee(p);
   const id = db.prepare('INSERT INTO inspections(property_id, user_id, agent_id, slot, note, fee) VALUES(?,?,?,?,?,?)')
     .run(p.id, req.user.id, p.owner_id, slot, str(req.body.note, 300), fee).lastInsertRowid;
   if (fee === 0) {
@@ -200,6 +211,7 @@ r.post('/inspections/:id/reschedule', requireAuth, (req, res) => {
   const i = mustInspection(req);
   if (i.status !== 'confirmed') throw new HttpError(409, 'Only a confirmed inspection can be rescheduled.');
   const slot = parseSlot(req.body.slot);
+  if (slotTaken(i.property_id, i.agent_id, slot, i.id)) throw new HttpError(409, 'That time is already booked. Please choose another.');
   db.prepare('UPDATE inspections SET slot = ?, reminded = 0 WHERE id = ?').run(slot, i.id);
   const p = listings.getProperty(i.property_id);
   const other = userById(req.user.id === i.user_id ? i.agent_id : i.user_id);

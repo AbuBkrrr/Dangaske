@@ -79,6 +79,7 @@ test('listing, automatic compression, publish + notifications', async () => {
 });
 
 test('pay to view full information', async () => {
+  await admin('PUT', '/api/admin/settings', { default_unlock_fee: 1000 }); // the fee is off by default; switch it on for this check
   const teaser = await buyer('GET', `/api/properties/${propId}`);
   assert.equal(teaser.body.locked, true);
   for (const k of ['address', 'contact_phone', 'media', 'description']) assert.equal(teaser.body[k], undefined);
@@ -294,7 +295,7 @@ test('customer experience: paid inspection, chat, saved search, receipts, review
   assert.equal((await agent('GET', '/api/my/inspections')).body.length, 0); // agent is not bothered until the fee is paid
   await cust('POST', `/api/payments/demo/${book.body.reference}`);
   const mineI = (await agent('GET', '/api/my/inspections')).body;
-  assert.deepEqual([mineI[0].status, mineI[0].fee, mineI[0].role], ['confirmed', 5000, 'agent']);
+  assert.deepEqual([mineI[0].status, mineI[0].fee, mineI[0].role], ['confirmed', 3000, 'agent']);
   assert.equal((await cust('GET', `/api/properties/${pid}`)).body.address, '9 Hidden Close'); // paying to inspect unlocks details
   assert.equal((await buyer('POST', `/api/properties/${pid}/inspections`, { slot: iso })).status, 409); // slot taken
   assert.equal((await cust('POST', `/api/inspections/${mineI[0].id}/status`, { status: 'completed' })).status, 403);
@@ -316,9 +317,9 @@ test('customer experience: paid inspection, chat, saved search, receipts, review
   assert.deepEqual([(await anon('GET', `/api/agents/${agentId}/reviews`)).body.avg, (await anon('GET', `/api/properties/${pid}`)).body.agent.rating], [4, 4]);
 
   const e = (await cust('POST', `/api/properties/${pid}/escrow`, {})).body;
-  assert.equal(e.credit, 5000); // inspection fee credited to the purchase
+  assert.equal(e.credit, 3000); // inspection fee credited to the purchase
   const pay = await cust('POST', `/api/escrows/${e.id}/pay`);
-  assert.equal(db.prepare('SELECT amount FROM payments WHERE reference = ?').get(pay.body.reference).amount, 8000000 + 120000 - 5000);
+  assert.equal(db.prepare('SELECT amount FROM payments WHERE reference = ?').get(pay.body.reference).amount, 8000000 + 120000 - 3000);
 
   const tc = await cust('POST', `/api/properties/${pid}/title-check`);
   await cust('POST', `/api/payments/demo/${tc.body.reference}`);
@@ -345,7 +346,7 @@ test('customer experience: paid inspection, chat, saved search, receipts, review
   assert.equal(experience.remind().instalments, 1);
   assert.equal(experience.remind().instalments, 0); // not nagged twice
   const desk = (await admin('GET', '/api/admin/desk')).body;
-  assert.ok(desk.inspections.length >= 1 && desk.referrals.length === 1 && desk.fees.collected === 5000);
+  assert.ok(desk.inspections.length >= 1 && desk.referrals.length === 1 && desk.fees.collected === 3000);
 });
 
 test('SPV unit resale between verified members', async () => {
@@ -399,4 +400,36 @@ test('contact form forwards to the company email', async () => {
   assert.equal((await anon('POST', '/api/reports', { kind: 'contact', name: 'Aisha', contact: '08031112222', message: 'I want to list my estate.' })).status, 201);
   mail.send = orig;
   assert.ok(sent.some(([to, subject]) => to === 'info@dangaskerealestate.com.ng' && /Aisha/.test(subject)));
+});
+
+test('inspection fee bands, land by distance, calendar slots', async () => {
+  await admin('PUT', '/api/admin/settings', { default_unlock_fee: 0 });
+  const fee = async (b) => { const p = await admin('POST', '/api/properties', { title: 'Fee test', ...b }); return (await admin('GET', `/api/properties/${p.body.id}`)).body.inspection_fee; };
+  assert.equal((await anon('GET', '/api/properties/1')).body.locked, false); // view-details fee is gone
+  assert.deepEqual([await fee({ purpose: 'rent', price: 1900000 }), await fee({ purpose: 'rent', price: 2000000 }), await fee({ purpose: 'shortlet', price: 500000 })], [3000, 5000, 3000]);
+  assert.deepEqual([await fee({ purpose: 'sale', price: 4900000 }), await fee({ purpose: 'sale', price: 5000000 }), await fee({ purpose: 'sale', price: 47000000 }), await fee({ purpose: 'sale', price: 50000000 })], [3000, 5000, 5000, 10000]);
+  assert.equal(await fee({ type: 'land', price: 3000000, city: 'Kano', state: 'Kano', lat: 12.0022, lng: 8.592 }), 3000); // in the city
+  const far = await fee({ type: 'land', price: 3000000, city: 'Kano', state: 'Kano', lat: 12.2022, lng: 8.592 }); // about 22 km out
+  assert.ok(far > 7000 && far < 8000, `far land fee ${far}`);
+  assert.equal(await fee({ type: 'land', price: 3000000, city: 'Kano', distance_km: 500 }), 25000); // capped
+  assert.equal(await fee({ type: 'land', price: 3000000, city: 'Nowhere' }), 3000); // no distance known: base fee
+  await admin('PUT', '/api/admin/settings', { insp_rent_high: 7500 });
+  assert.equal(await fee({ purpose: 'rent', price: 3000000 }), 7500); // admin can change a band
+  await admin('PUT', '/api/admin/settings', { insp_rent_high: 5000 });
+
+  const c = buyer;
+  const p = await admin('POST', '/api/properties', { title: 'Slot house', price: 2500000, purpose: 'rent', state: 'Kano' });
+  await admin('POST', `/api/properties/${p.body.id}/submit`);
+  const day = new Date(Date.now() + 5 * 86400e3).toISOString().slice(0, 10);
+  const pay = await c('POST', `/api/properties/${p.body.id}/inspections`, { slot: `${day}T10:00` });
+  assert.equal(db.prepare('SELECT amount FROM payments WHERE reference = ?').get(pay.body.reference).amount, 5000);
+  assert.deepEqual((await anon('GET', `/api/properties/${p.body.id}/slots?date=${day}`)).body.booked, []); // unpaid does not block
+  await c('POST', `/api/payments/demo/${pay.body.reference}`);
+  assert.deepEqual((await anon('GET', `/api/properties/${p.body.id}/slots?date=${day}`)).body.booked, ['10:00']);
+  const other = await admin('POST', '/api/properties', { title: 'Same agent, other house', price: 2500000, purpose: 'rent', state: 'Kano' });
+  await admin('POST', `/api/properties/${other.body.id}/submit`);
+  const c2 = agent;
+  assert.equal((await c2('POST', `/api/properties/${other.body.id}/inspections`, { slot: `${day}T10:00` })).status, 409); // the agent is busy then
+  assert.equal((await c2('POST', `/api/properties/${other.body.id}/inspections`, { slot: `${day}T11:00` })).status, 200);
+  assert.equal((await anon('GET', '/api/properties/1/slots?date=nonsense')).status, 400);
 });
