@@ -3,6 +3,8 @@ services:
     build: .
     container_name: dangaske-web
     restart: unless-stopped
+    mem_limit: 768m           # keeps video compression from starving other apps on a shared server
+    cpus: 1.0
     env_file: .env
     environment:
       NODE_ENV: production
