@@ -57,6 +57,9 @@ config.MEDIA_DIR = path.join(config.DATA_DIR, 'media');
 config.TMP_DIR = path.join(config.DATA_DIR, 'tmp');
 config.WHATSAPP_LIVE = Boolean(config.WHATSAPP_TOKEN && config.WHATSAPP_PHONE_ID);
 config.PAYMENTS_LIVE = Boolean(config.PAYSTACK_SECRET_KEY);
+// Private test servers only: lets the simulated checkout work with NODE_ENV=production. Also marks the site noindex.
+config.TEST_MODE = process.env.ALLOW_DEMO_PAYMENTS === '1';
+config.DEMO_PAYMENTS_OK = !config.PRODUCTION || config.TEST_MODE;
 
 for (const d of [config.DATA_DIR, config.MEDIA_DIR, config.TMP_DIR]) fs.mkdirSync(d, { recursive: true });
 

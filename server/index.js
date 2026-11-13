@@ -16,6 +16,7 @@ const mail = require('./mail');
 const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+if (config.TEST_MODE) app.use((_req, res, next) => { res.setHeader('X-Robots-Tag', 'noindex, nofollow'); next(); });
 app.use(express.json({ limit: '200kb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');

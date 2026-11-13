@@ -26,7 +26,7 @@ async function paystack(method, path, body) {
 /** Start a payment. Returns { reference, url } - the browser is sent to url. */
 async function start(user, purpose, targetId, amount) {
   if (!(amount > 0)) throw new HttpError(400, 'Nothing to pay.');
-  if (DEMO && config.PRODUCTION) throw new HttpError(503, 'Payments are not configured yet. Please contact support.');
+  if (DEMO && !config.DEMO_PAYMENTS_OK) throw new HttpError(503, 'Payments are not configured yet. Please contact support.');
   const reference = `DG-${purpose.slice(0, 3).toUpperCase()}-${crypto.randomBytes(9).toString('hex')}`;
   db.prepare('INSERT INTO payments(reference, user_id, purpose, target_id, amount, provider) VALUES(?,?,?,?,?,?)')
     .run(reference, user.id, purpose, targetId, amount, DEMO ? 'demo' : 'paystack');
@@ -128,14 +128,14 @@ async function verify(reference) {
 
 /** Demo checkout confirmation - only the payer, only when no payment provider is configured. */
 function demoConfirm(user, reference) {
-  if (!DEMO || config.PRODUCTION) throw new HttpError(404, 'Not available.');
+  if (!DEMO || !config.DEMO_PAYMENTS_OK) throw new HttpError(404, 'Not available.');
   const payment = db.prepare("SELECT * FROM payments WHERE reference = ? AND provider = 'demo'").get(String(reference || ''));
   if (!payment || payment.user_id !== user.id) throw new HttpError(404, 'Payment not found.');
   return { paid: true, ...fulfil(payment) };
 }
 
 function demoInfo(user, reference) {
-  if (!DEMO || config.PRODUCTION) throw new HttpError(404, 'Not available.');
+  if (!DEMO || !config.DEMO_PAYMENTS_OK) throw new HttpError(404, 'Not available.');
   const payment = db.prepare("SELECT reference, amount, purpose, status, user_id FROM payments WHERE reference = ? AND provider = 'demo'").get(String(reference || ''));
   if (!payment || payment.user_id !== user.id) throw new HttpError(404, 'Payment not found.');
   return payment;
