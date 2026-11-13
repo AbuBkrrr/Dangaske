@@ -232,3 +232,5 @@ body { background: var(--bg); }
 .btn.disabled { opacity: .45; pointer-events: none; }
 a.stepc { text-decoration: none; color: inherit; } a.stepc.on { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(216,31,42,.25); } a.stepc.done h3::after { content: ' ✓'; color: #14603c; }
 .pcard.sel { outline: 3px solid var(--gold); }
+
+.brand img { border-radius: 50%; background: #121c4a; flex: none; object-fit: cover; color: transparent; font-size: 0; }

@@ -494,6 +494,7 @@ app.get('/.well-known/assetlinks.json', (_req, res) => {
 app.use('/media', express.static(config.MEDIA_DIR, { maxAge: '30d', immutable: true, index: false }));
 app.use(express.static(path.join(__dirname, '..', 'public'), { index: false, setHeaders: (res, file) => {
   if (file.endsWith('sw.js') || file.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+  else if (/\.(png|webp|svg)$/.test(file)) res.setHeader('Cache-Control', 'public, max-age=604800');
 } }));
 
 const INDEX = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
