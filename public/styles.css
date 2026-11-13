@@ -227,3 +227,8 @@ body { background: var(--bg); }
 .nav .navcta { color: #fff; border: 1px solid rgba(255,255,255,.4); padding: 4px 12px; border-radius: 99px; } .nav .navcta:hover { background: var(--gold); border-color: var(--gold); color: #fff; }
 @media (max-width: 860px) { .top-in { min-height: 72px; } .brand img { width: 56px; height: 56px; } .nav { top: 72px; } }
 @media (min-width: 861px) { .brand span { position: absolute; left: -9999px; } .nav { gap: 16px; } }
+
+/* invest steps */
+.btn.disabled { opacity: .45; pointer-events: none; }
+a.stepc { text-decoration: none; color: inherit; } a.stepc.on { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(216,31,42,.25); } a.stepc.done h3::after { content: ' ✓'; color: #14603c; }
+.pcard.sel { outline: 3px solid var(--gold); }

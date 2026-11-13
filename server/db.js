@@ -226,6 +226,8 @@ addColumn('properties', 'nearby', "TEXT NOT NULL DEFAULT ''");
 addColumn('properties', 'tour_url', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'referred_by', 'INTEGER');
 addColumn('properties', 'distance_km', 'REAL');
+addColumn('users', 'kyc_data', "TEXT NOT NULL DEFAULT '{}'");
+addColumn('users', 'kyc_files', "TEXT NOT NULL DEFAULT '{}'");
 addColumn('users', 'email', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'email_verified', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('installments', 'reminded_at', 'TEXT');

@@ -40,6 +40,14 @@ async function login(c, phone, extra = {}) {
 }
 const png = (w, h) => sharp({ create: { width: w, height: h, channels: 3, background: { r: 30, g: 120, b: 90 }, noise: { type: 'gaussian', mean: 128, sigma: 40 } } }).png().toBuffer();
 
+async function kycFormData(extra = {}, skip = []) {
+  const f = new FormData();
+  const base = { full_name: 'Ada Okafor', dob: '1990-05-04', nationality: 'Nigerian', address: '12 Zaria Rd, Kano', occupation: 'Estate agent', source_of_funds: 'Business income', id_type: 'NIN slip', id_number: '12345678901', business_name: 'Ada Homes', rc_number: '1234567', consent: 'on', ...extra };
+  for (const [k, v] of Object.entries(base)) f.append(k, v);
+  for (const k of ['id_front', 'photo', 'address_proof', 'cac']) if (!skip.includes(k)) f.append(k, new Blob([await png(300, 200)], { type: 'image/png' }), `${k}.png`);
+  return f;
+}
+
 test.before(() => new Promise((r) => { server = app.listen(0, () => { base = `http://127.0.0.1:${server.address().port}`; r(); }); }));
 test.after(() => { server.close(); fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true }); });
 
@@ -54,6 +62,7 @@ test('phone sign-up with WhatsApp code', async () => {
   assert.equal(b.role, 'buyer'); // cannot self-assign admin
   assert.equal(b.phone, '2348022222222');
   assert.equal((await login(agent, '+2348033333333', { name: 'Ada', role: 'agent' })).role, 'agent');
+  db.prepare("UPDATE users SET verified = 1, kyc_status = 'approved' WHERE phone = '2348033333333'").run(); // verification itself is tested below
   assert.equal((await anon('POST', '/api/auth/request-otp', { phone: '08044444444' })).status, 200);
   assert.equal((await anon('POST', '/api/auth/request-otp', { phone: '08044444444' })).status, 429); // resend cooldown
 });
@@ -213,16 +222,26 @@ test('verification, flags, directory, reports, suspension, audit', async () => {
   assert.equal(dir.body[0].phone, undefined); // no contact leak around pay-to-view
   assert.equal((await buyer('PATCH', '/api/me', { name: 'Bala', account_type: 'developer' })).body.user.account_type, 'individual');
 
-  const form = new FormData();
-  form.append('doc_type', 'NIN slip');
-  form.append('document', new Blob([await png(600, 400)], { type: 'image/png' }), 'id.png');
-  const k = await agent('POST', '/api/me/kyc', null, form);
+  const agentId = (await agent('GET', '/api/me')).body.user.id;
+  db.prepare("UPDATE users SET verified = 0, kyc_status = 'none' WHERE id = ?").run(agentId);
+  const blocked = await agent('POST', '/api/properties', { title: 'Blocked', price: 1000000 });
+  assert.deepEqual([blocked.status, blocked.body.code], [403, 'kyc_required']); // professionals cannot post before KYC
+  assert.equal((await agent('PATCH', `/api/properties/${propId}`, { price: 1 })).status, 403);
+  assert.equal((await agent('POST', '/api/me/kyc', null, await kycFormData({}, ['cac']))).status, 400); // agency needs the CAC certificate
+  assert.equal((await agent('POST', '/api/me/kyc', null, await kycFormData({ dob: '2015-01-01' }))).status, 400); // under 18
+  assert.equal((await agent('POST', '/api/me/kyc', null, await kycFormData({ id_type: 'Library card' }))).status, 400);
+  const k = await agent('POST', '/api/me/kyc', null, await kycFormData());
+  assert.equal(k.status, 200, JSON.stringify(k.body));
   assert.equal(k.body.user.kyc_status, 'pending');
-  const agentId = k.body.user.id;
+  assert.equal(k.body.user.kyc_data.rc_number, '1234567');
+  assert.equal((await agent('POST', '/api/properties', { title: 'Still blocked', price: 1000000 })).status, 403); // pending is not enough
   assert.equal((await buyer('GET', `/api/admin/kyc/${agentId}/file`)).status, 403);
-  assert.equal(fs.readdirSync(path.join(process.env.DATA_DIR, 'kyc')).length, 1);
+  assert.equal((await admin('GET', `/api/admin/kyc/${agentId}/file?doc=cac`)).status, 200);
+  assert.equal((await admin('GET', `/api/admin/kyc/${agentId}/file?doc=nope`)).status, 404);
+  assert.equal(fs.readdirSync(path.join(process.env.DATA_DIR, 'kyc')).length, 4); // id, photo, address, CAC
   await admin('POST', `/api/admin/users/${agentId}/kyc`, { approve: true });
   assert.equal((await anon('GET', `/api/agents/${agentId}`)).body.verified, true);
+  assert.equal((await agent('POST', '/api/properties', { title: 'Allowed after KYC', price: 1000000 })).status, 201);
 
   assert.equal((await anon('POST', '/api/reports', { kind: 'listing', property_id: p.body.id, message: 'short' })).status, 400);
   assert.equal((await anon('POST', '/api/reports', { kind: 'listing', property_id: p.body.id, message: 'This listing looks fake to me' })).status, 201);
@@ -432,4 +451,15 @@ test('inspection fee bands, land by distance, calendar slots', async () => {
   assert.equal((await c2('POST', `/api/properties/${other.body.id}/inspections`, { slot: `${day}T10:00` })).status, 409); // the agent is busy then
   assert.equal((await c2('POST', `/api/properties/${other.body.id}/inspections`, { slot: `${day}T11:00` })).status, 200);
   assert.equal((await anon('GET', '/api/properties/1/slots?date=nonsense')).status, 400);
+});
+
+test('services directory lists only verified providers, by category', async () => {
+  db.prepare("UPDATE users SET account_type = 'service', service_category = 'legal' WHERE phone = '2348033333333'").run();
+  const rows = (await anon('GET', '/api/agents?type=service&category=legal')).body;
+  assert.equal(rows.length, 1);
+  assert.match(rows[0].phone, /^234/); // providers are meant to be contacted
+  assert.equal((await anon('GET', '/api/agents?type=service&category=surveying')).body.length, 0);
+  db.prepare("UPDATE users SET verified = 0 WHERE phone = '2348033333333'").run();
+  assert.equal((await anon('GET', '/api/agents?type=service')).body.length, 0); // unverified providers stay hidden
+  db.prepare("UPDATE users SET verified = 1, account_type = 'agency' WHERE phone = '2348033333333'").run();
 });

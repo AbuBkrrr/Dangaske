@@ -5,7 +5,7 @@ const multer = require('multer');
 const config = require('./config');
 const { db, audit, allSettings, setSetting, DEFAULT_SETTINGS } = require('./db');
 const auth = require('./auth');
-const { HttpError, requireAuth, requireRole } = auth;
+const { HttpError, requireAuth, requireRole, requireVerifiedPro, needKyc } = auth;
 const listings = require('./listings');
 const media = require('./media');
 const payments = require('./payments');
@@ -34,6 +34,7 @@ const upload = multer({
 
 const publicUser = (u) => (u ? {
   id: u.id, phone: u.phone, name: u.name, role: u.role, account_type: u.account_type, company: u.company, bio: u.bio, city: u.city,
+  kyc_data: (() => { try { return JSON.parse(u.kyc_data || '{}'); } catch { return {}; } })(),
   email: u.email, email_verified: Boolean(u.email_verified),
   service_category: u.service_category, verified: Boolean(u.verified), kyc_status: u.kyc_status, kyc_note: u.kyc_note,
 } : null);
@@ -81,7 +82,11 @@ api.post('/auth/verify', auth.rateLimit('verify', 20, 15 * 60 * 1000), (req, res
   if (!phone) throw new HttpError(400, 'Enter a valid phone number.');
   auth.checkOtp(phone, req.body.code);
   const user = auth.upsertUser(phone, { name: req.body.name, role: req.body.role });
-  if (user.isNew && user.role === 'agent') { db.prepare("UPDATE users SET account_type = 'agent' WHERE id = ?").run(user.id); user.account_type = 'agent'; }
+  if (user.isNew && user.role === 'agent') {
+    const type = ['agent', 'agency', 'developer', 'service'].includes(req.body.role) ? req.body.role : 'agent';
+    db.prepare('UPDATE users SET account_type = ? WHERE id = ?').run(type, user.id);
+    user.account_type = type;
+  }
   if (user.isNew) experience.applyReferral(user, req.body.ref);
   audit(user.id, user.isNew ? 'signup' : 'login');
   auth.createSession(res, user.id);
@@ -133,6 +138,8 @@ api.get('/properties/:id', (req, res) => {
 });
 
 const manageable = (req) => {
+  const gate = needKyc(req.user);
+  if (gate) throw gate;
   const p = listings.mustGet(req.params.id);
   if (!listings.canManage(req.user, p)) throw new HttpError(403, 'You cannot manage this listing.');
   return p;
@@ -143,7 +150,7 @@ api.get('/my/properties', requireAuth, (req, res) => {
   res.json(rows.map((p) => listings.present(p, req.user)));
 });
 
-api.post('/properties', requireRole('agent', 'admin'), (req, res) => {
+api.post('/properties', requireVerifiedPro, (req, res) => {
   const p = listings.createProperty(req.user, req.body);
   res.status(201).json(listings.present(p, req.user));
 });
@@ -381,7 +388,7 @@ admin.get('/overview', (req, res) => {
     escrows: payments.escrowsFor('1=1'),
     subscriptions: payments.subscriptionsFor('1=1'),
     plans: db.prepare('SELECT * FROM plans ORDER BY months').all(),
-    users: db.prepare('SELECT id, phone, name, role, created_at, account_type, company, verified, kyc_status, kyc_doc_type, kyc_note, suspended FROM users ORDER BY id DESC LIMIT 200').all(),
+    users: db.prepare('SELECT id, phone, name, role, created_at, account_type, company, verified, kyc_status, kyc_doc_type, kyc_note, kyc_data, kyc_files, suspended FROM users ORDER BY id DESC LIMIT 200').all(),
     settings: allSettings(),
     integrations: {
       whatsapp: config.WHATSAPP_LIVE, email: mail.LIVE, payments: config.PAYMENTS_LIVE, video_compression: media.HAS_FFMPEG,
@@ -535,7 +542,7 @@ app.use((err, _req, res, _next) => {
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid request.' });
   const status = err.status || 500;
   if (status >= 500) console.error(err);
-  res.status(status).json({ error: status >= 500 && !(err instanceof HttpError) ? 'Something went wrong. Please try again.' : err.message });
+  res.status(status).json({ error: status >= 500 && !(err instanceof HttpError) ? 'Something went wrong. Please try again.' : err.message, code: err.code });
 });
 
 // Housekeeping: expired sessions / codes and stray temp uploads.

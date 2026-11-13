@@ -18,9 +18,10 @@ fs.mkdirSync(KYC_DIR, { recursive: true });
 const KYC_TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
 const kycUpload = multer({
   dest: config.TMP_DIR,
-  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  limits: { fileSize: 10 * 1024 * 1024, files: 5 },
   fileFilter: (_req, file, cb) => cb(null, Boolean(KYC_TYPES[file.mimetype])),
 });
+
 
 const ACCOUNT_TYPES = ['agent', 'agency', 'developer', 'service'];
 const SERVICES = ['legal', 'surveying', 'valuation', 'finance', 'architecture & design', 'construction', 'facility management', 'advisory'];
@@ -30,6 +31,7 @@ const FEATURED_CITIES = ['Kano', 'Abuja', 'Lagos', 'Kaduna', 'Port Harcourt', 'K
 const { str } = listings;
 
 const profile = (u) => ({
+  ...(u.account_type === 'service' ? { phone: u.phone } : {}),
   id: u.id, name: u.company || u.name || 'Member', person: u.company ? u.name : '', type: u.account_type, city: u.city, bio: u.bio,
   service_category: u.service_category, verified: Boolean(u.verified), since: u.created_at,
   listings: db.prepare("SELECT COUNT(*) AS n FROM properties WHERE owner_id = ? AND status = 'active'").get(u.id).n,
@@ -74,30 +76,67 @@ module.exports = ({ publicUser }) => {
     res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)) });
   });
 
-  r.post('/me/kyc', requireAuth, kycUpload.single('document'), async (req, res) => {
-    const f = req.file;
+  const ID_TYPES = DOC_TYPES.filter((d) => d !== 'CAC certificate');
+  const KYC_KEYS = ['id_front', 'id_back', 'photo', 'address_proof', 'cac'];
+  const KYC_LABELS = { id_front: 'a photo of the front of your ID', photo: 'a passport-style photograph', address_proof: 'proof of address (utility bill, bank statement or tenancy agreement)', cac: 'your CAC certificate' };
+  const SOURCES = ['Salary', 'Business income', 'Savings', 'Sale of property', 'Gift or inheritance', 'Diaspora remittance', 'Other'];
+
+  // Full identity check: personal details, source of funds, ID, photo, proof of address (+ CAC for agencies and developers).
+  r.post('/me/kyc', requireAuth, kycUpload.fields(KYC_KEYS.map((name) => ({ name, maxCount: 1 }))), async (req, res) => {
+    const files = req.files || {};
+    const drop = () => Object.values(files).flat().forEach((f) => fs.promises.unlink(f.path).catch(() => {}));
     try {
-      if (!f) throw new HttpError(400, 'Upload a clear photo or PDF of your ID (JPG, PNG, WebP or PDF, max 10 MB).');
-      if (!DOC_TYPES.includes(req.body.doc_type)) throw new HttpError(400, 'Choose the type of document.');
       if (req.user.kyc_status === 'approved') throw new HttpError(409, 'Your identity is already verified.');
-      const name = `${crypto.randomBytes(16).toString('hex')}.${KYC_TYPES[f.mimetype]}`;
-      await fs.promises.rename(f.path, path.join(KYC_DIR, name));
-      if (req.user.kyc_file) fs.promises.unlink(path.join(KYC_DIR, path.basename(req.user.kyc_file))).catch(() => {});
-      db.prepare("UPDATE users SET kyc_status = 'pending', kyc_file = ?, kyc_doc_type = ?, kyc_note = '' WHERE id = ?").run(name, req.body.doc_type, req.user.id);
+      const b = req.body, t = (k, n) => str(b[k], n);
+      const biz = ['agency', 'developer'].includes(req.user.account_type), svc = req.user.account_type === 'service';
+      const data = {
+        full_name: t('full_name', 120), dob: t('dob', 10), gender: ['Male', 'Female'].includes(b.gender) ? b.gender : '', nationality: t('nationality', 60),
+        address: t('address', 250), occupation: t('occupation', 100), source_of_funds: SOURCES.includes(b.source_of_funds) ? b.source_of_funds : '',
+        id_type: ID_TYPES.includes(b.id_type) ? b.id_type : '', id_number: t('id_number', 40), bvn: /^\d{11}$/.test(String(b.bvn || '')) ? b.bvn : '',
+      };
+      if (biz) { data.business_name = t('business_name', 150); data.rc_number = t('rc_number', 30); }
+      for (const k of ['full_name', 'nationality', 'address', 'occupation', 'id_number']) if (!data[k]) throw new HttpError(400, 'Please fill in every required field.');
+      if (!data.id_type || !data.source_of_funds) throw new HttpError(400, 'Please choose your ID type and source of funds.');
+      if (biz && (!data.business_name || !data.rc_number)) throw new HttpError(400, 'Enter your business name and CAC (RC) number.');
+      if (svc && !SERVICES.includes(b.service_category)) throw new HttpError(400, 'Choose the service you offer.');
+      const dob = new Date(data.dob);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(data.dob) || Number.isNaN(dob.getTime()) || dob.getFullYear() < 1900 || Date.now() - dob.getTime() < 18 * 365.25 * 86400e3) {
+        throw new HttpError(400, 'Enter a valid date of birth (you must be 18 or older).');
+      }
+      if (!['on', 'true'].includes(String(b.consent))) throw new HttpError(400, 'Please confirm the declaration.');
+      for (const k of ['id_front', 'photo', 'address_proof', ...(biz ? ['cac'] : [])]) if (!files[k]) throw new HttpError(400, `Please upload ${KYC_LABELS[k]} (JPG, PNG, WebP or PDF, max 10 MB).`);
+      const stored = {};
+      for (const k of KYC_KEYS) {
+        const f = (files[k] || [])[0];
+        if (!f) continue;
+        const name = `${crypto.randomBytes(16).toString('hex')}.${KYC_TYPES[f.mimetype]}`;
+        await fs.promises.rename(f.path, path.join(KYC_DIR, name));
+        stored[k] = name;
+      }
+      let old = {}; try { old = JSON.parse(req.user.kyc_files || '{}'); } catch { /* ignore */ }
+      for (const n of [...Object.values(old), req.user.kyc_file]) if (n) fs.promises.unlink(path.join(KYC_DIR, path.basename(n))).catch(() => {});
+      db.prepare(`UPDATE users SET kyc_status = 'pending', kyc_data = ?, kyc_files = ?, kyc_doc_type = ?, kyc_file = ?, kyc_note = '',
+                    name = CASE WHEN name = '' THEN ? ELSE name END,
+                    company = CASE WHEN company = '' THEN ? ELSE company END, service_category = ? WHERE id = ?`)
+        .run(JSON.stringify(data), JSON.stringify(stored), data.id_type, stored.id_front, data.full_name, data.business_name || '',
+          svc ? b.service_category : req.user.service_category, req.user.id);
     } catch (e) {
-      if (f) fs.promises.unlink(f.path).catch(() => {});
+      drop();
       throw e;
     }
-    push.notifyAdmins({ title: 'Verification request', body: `${req.user.name || '+' + req.user.phone} submitted an ID for review.`, url: '/admin?tab=verify' });
+    push.notifyAdmins({ title: 'Verification request', body: `${req.user.name || '+' + req.user.phone} submitted KYC for review.`, url: '/admin?tab=verify' });
     res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)) });
   });
 
   r.get('/admin/kyc/:id/file', requireRole('admin'), (req, res) => {
-    const u = db.prepare('SELECT kyc_file FROM users WHERE id = ?').get(Number(req.params.id) || 0);
-    if (!u || !u.kyc_file) throw new HttpError(404, 'No document on file.');
+    const u = db.prepare('SELECT kyc_file, kyc_files FROM users WHERE id = ?').get(Number(req.params.id) || 0);
+    let files = {}; try { files = JSON.parse((u && u.kyc_files) || '{}'); } catch { /* ignore */ }
+    const doc = String(req.query.doc || 'id_front');
+    const name = files[doc] || (doc === 'id_front' && u ? u.kyc_file : '');
+    if (!name) throw new HttpError(404, 'No document on file.');
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Content-Disposition', 'inline');
-    res.sendFile(path.join(KYC_DIR, path.basename(u.kyc_file)));
+    res.sendFile(path.join(KYC_DIR, path.basename(name)));
   });
 
   r.post('/admin/users/:id/kyc', requireRole('admin'), (req, res) => {
@@ -137,6 +176,10 @@ module.exports = ({ publicUser }) => {
     const args = [];
     if (ACCOUNT_TYPES.includes(req.query.type)) { where.push('account_type = ?'); args.push(req.query.type); }
     else where.push("account_type != 'service'");
+    if (req.query.type === 'service') {
+      where.push('verified = 1'); // only verified providers are listed
+      if (SERVICES.includes(req.query.category)) { where.push('service_category = ?'); args.push(req.query.category); }
+    }
     if (req.query.q) { const like = `%${String(req.query.q).slice(0, 40).replace(/[%_]/g, '')}%`; where.push('(name LIKE ? OR company LIKE ? OR city LIKE ?)'); args.push(like, like, like); }
     const rows = db.prepare(`SELECT * FROM users WHERE ${where.join(' AND ')} ORDER BY verified DESC, id LIMIT 100`).all(...args);
     res.json(rows.map(profile));

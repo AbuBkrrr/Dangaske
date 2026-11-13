@@ -103,7 +103,7 @@ function fulfil(payment) {
           });
         });
       }
-      return { redirect: '/dashboard?tab=invest', message: 'Investment confirmed. Your units are in your portfolio.' };
+      return { redirect: '/invest?step=4', message: 'Investment confirmed. Your units are in your portfolio.' };
     }
     if (handlers[fresh.purpose]) return handlers[fresh.purpose](fresh, already, after);
     return { redirect: '/dashboard', message: 'Payment received.' };

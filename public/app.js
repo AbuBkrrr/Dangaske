@@ -26,7 +26,7 @@
       body: form || (body ? JSON.stringify(body) : undefined),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) { const err = new Error(data.error || 'Request failed'); err.status = res.status; throw err; }
+    if (!res.ok) { const err = new Error(data.error || 'Request failed'); err.status = res.status; err.code = data.code; throw err; }
     return data;
   }
 
@@ -36,7 +36,7 @@
     t.textContent = msg; t.className = 'toast' + (err ? ' err' : ''); t.hidden = false;
     clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), 4200);
   }
-  const fail = (err) => { if (err.status === 401) openLogin(); else toast(err.message, true); };
+  const fail = (err) => { if (err.status === 401) openLogin(); else if (err.code === 'kyc_required') { toast(err.message, true); go('/kyc'); } else toast(err.message, true); };
 
   /** Run an async action with the button disabled; errors become toasts. */
   async function busy(btn, fn) {
@@ -81,7 +81,7 @@
         <div><label for="cd">Verification code</label><input id="cd" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required value="${e(r.demo_code || '')}"></div>
         ${r.is_new ? `<div><label for="nm">Your name</label><input id="nm" name="name" autocomplete="name" required maxlength="80"></div>
         <div><label for="em">Email <span class="small muted">(optional — for receipts and alerts)</span></label><input id="em" name="email" type="email" autocomplete="email" maxlength="200"></div>
-        <div><label for="rl">I am a</label><select id="rl" name="role"><option value="buyer">Buyer / tenant</option><option value="agent">Agent / property owner</option></select></div>` : ''}
+        <div><label for="rl">I am a</label><select id="rl" name="role">${[['buyer', 'Buyer / tenant / investor'], ['agent', 'Agent / property owner'], ['agency', 'Real estate agency'], ['developer', 'Developer'], ['service', 'Service provider (lawyer, surveyor…)']].map(([v, t]) => `<option value="${v}"${v === (DG.presetRole || 'buyer') ? ' selected' : ''}>${t}</option>`).join('')}</select><p class="small muted" style="margin:4px 0 0">Agents, agencies, developers and service providers complete identity verification (KYC) before they can post.</p></div>` : ''}
         <button class="btn block">Verify and continue</button></form>`);
     $('#f2', m).addEventListener('submit', (ev) => {
       ev.preventDefault();
@@ -92,7 +92,7 @@
         if (em) api('/me/email', { method: 'POST', body: { email: em } }).then((x) => { S.user = x.user; toast('We emailed you a code — confirm your email in your dashboard.'); }).catch(() => {});
         await refreshNotifs(); renderUser();
         if (r.is_new) offerPush();
-        if (typeof then === 'function') then(); else render();
+        if (r.is_new && out.user.role === 'agent') go('/kyc'); else if (typeof then === 'function') then(); else render();
       });
     });
   }
@@ -276,6 +276,7 @@
   // post / edit listing
   async function postPage(q) {
     if (needLogin()) return (app.innerHTML = '<p class="pad center muted">Sign in to post a property.</p>');
+    if (S.user.role === 'agent' && !S.user.verified) return (app.innerHTML = `<div class="pad center"><h2>Verify your identity first</h2><p class="muted">${S.user.kyc_status === 'pending' ? 'Your documents are under review. You can post as soon as you are approved.' : 'Agents, agencies and developers must complete identity verification (KYC) before posting.'}</p><a class="btn gold" href="/kyc" data-link>${S.user.kyc_status === 'pending' ? 'View my verification' : 'Complete KYC'}</a></div>`);
     if (!['agent', 'admin'].includes(S.user.role)) return (app.innerHTML = '<div class="pad center"><h2>Agents only</h2><p class="muted">Posting is for registered agents. Contact us to upgrade your account, or send a <a href="/request" data-link>property request</a>.</p></div>');
     const id = q.get('id');
     let p = id ? await api('/properties/' + id) : null;
@@ -543,6 +544,6 @@
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     render();
   }
-  const DG = (window.DG = { $, app, S, e, money, price, currency, SYM, cap, date, mb, status, opts, api, toast, busy, formData, go, needLogin, modal, closeModal, cards, pcard, place, cleanQuery, STATES, render, vbadge, pay, ACTIONS, easyBuyPage, shareBar, fail, routes: [], dashTabs: {}, adminTabs: {}, onBoot: [] });
+  const DG = (window.DG = { $, app, S, e, money, price, currency, SYM, cap, date, mb, status, opts, api, toast, busy, formData, go, needLogin, modal, closeModal, cards, pcard, place, cleanQuery, STATES, render, vbadge, pay, ACTIONS, openLogin, easyBuyPage, shareBar, fail, routes: [], dashTabs: {}, adminTabs: {}, onBoot: [] });
   boot().catch(() => (app.innerHTML = '<p class="pad center">Could not load the site. Please refresh.</p>'));
 })();
