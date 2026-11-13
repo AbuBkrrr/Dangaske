@@ -246,6 +246,7 @@ const DEFAULT_SETTINGS = {
   support_whatsapp: '2348037572052',
   phones: '+234 803 757 2052, +234 816 130 4050',
   bank_name: '', bank_account_number: '', bank_account_name: '', // account customers pay into by bank transfer
+  payscrow_merchant_charge_pct: '50', // share of PayScrow's charge the seller bears (0-100); the buyer pays the rest
   request_fee: '2000',        // paid by a buyer/agent to publish a property request (0 = free)
   inspection_fee: '5000',     // fallback when no price band applies
   insp_rent_limit: '2000000', insp_rent_low: '3000', insp_rent_high: '5000',            // rent and short-let: below limit / at or above

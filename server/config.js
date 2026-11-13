@@ -44,6 +44,10 @@ const config = {
   // Secret for the hourly reminder URL called by the host's cron job
   CRON_KEY: env.CRON_KEY || '',
 
+  PAYSCROW_API_KEY: env.PAYSCROW_API_KEY || '',
+  PAYSCROW_BASE_URL: (env.PAYSCROW_BASE_URL || 'https://api.payscrow.net').replace(/\/$/, ''),
+  PAYSCROW_WEBHOOK_SECRET: env.PAYSCROW_WEBHOOK_SECRET || '',
+
   ANDROID_PACKAGE: env.ANDROID_PACKAGE || '',
   ANDROID_SHA256: (env.ANDROID_SHA256 || '').split(',').map((x) => x.trim()).filter(Boolean),
 

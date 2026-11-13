@@ -249,14 +249,17 @@ api.post('/properties/:id/escrow', requireAuth, (req, res) => {
   res.status(201).json(payments.escrowsFor('e.id = ?', id)[0]);
 });
 
-api.get('/my/escrows', requireAuth, (req, res) => {
+api.get('/my/escrows', requireAuth, async (req, res) => {
+  // Catch up with PayScrow for escrows still waiting on it (a webhook may be late).
+  for (const e of db.prepare("SELECT * FROM escrows WHERE (buyer_id = ? OR seller_id = ?) AND ps_number != '' AND status IN ('awaiting_payment','funded','disputed') LIMIT 5").all(req.user.id, req.user.id)) await payscrow.sync(e);
   const rows = payments.escrowsFor('e.buyer_id = ? OR e.seller_id = ?', req.user.id, req.user.id);
   res.json(rows.map((e) => ({ ...e, role: e.buyer_id === req.user.id ? 'buyer' : 'seller' })));
 });
 
 api.post('/escrows/:id/pay', requireAuth, async (req, res) => res.json(await payments.payEscrow(req.user, req.params.id)));
-api.post('/escrows/:id/release', requireAuth, (req, res) => { payments.releaseEscrow(req.user, req.params.id); res.json({ ok: true }); });
-api.post('/escrows/:id/dispute', requireAuth, (req, res) => { payments.disputeEscrow(req.user, req.params.id, req.body.note); res.json({ ok: true }); });
+api.post('/escrows/:id/release', requireAuth, async (req, res) => { await payments.releaseEscrow(req.user, req.params.id, (req.body || {}).code); res.json({ ok: true }); });
+api.post('/escrows/:id/delivery', requireAuth, async (req, res) => { await payments.submitDelivery(req.user, req.params.id, (req.body || {}).notes); res.json({ ok: true }); });
+api.post('/escrows/:id/dispute', requireAuth, async (req, res) => { await payments.disputeEscrow(req.user, req.params.id, (req.body || {}).note); res.json({ ok: true }); });
 api.post('/escrows/:id/cancel', requireAuth, (req, res) => { payments.cancelEscrow(req.user, req.params.id); res.json({ ok: true }); });
 api.post('/escrows/:id/refund', requireRole('admin'), (req, res) => { payments.refundEscrow(req.user, req.params.id, req.body.note); res.json({ ok: true }); });
 
@@ -391,7 +394,7 @@ admin.get('/overview', (req, res) => {
     users: db.prepare('SELECT id, phone, name, role, created_at, account_type, company, verified, kyc_status, kyc_doc_type, kyc_note, kyc_data, kyc_files, suspended FROM users ORDER BY id DESC LIMIT 200').all(),
     settings: allSettings(),
     integrations: {
-      whatsapp: config.WHATSAPP_LIVE, email: mail.LIVE, payments: config.PAYMENTS_LIVE, video_compression: media.HAS_FFMPEG,
+      whatsapp: config.WHATSAPP_LIVE, email: mail.LIVE, payscrow: payscrow.enabled(), payments: config.PAYMENTS_LIVE, video_compression: media.HAS_FFMPEG,
       facebook: Boolean(config.FB_PAGE_ID && config.FB_PAGE_TOKEN), telegram: Boolean(config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_CHAT_ID),
     },
   });
@@ -424,6 +427,7 @@ admin.put('/settings', (req, res) => {
       } catch { continue; }
     }
     if (['inspection_fee', 'title_check_fee', 'referral_reward', 'request_fee'].includes(key) || key.startsWith('insp_')) v = String(listings.int(v, 1e8));
+    if (key === 'payscrow_merchant_charge_pct') v = String(Math.min(100, Math.max(0, Math.round(Number(v) || 0))));
     if (key === 'bank_account_number') v = v.replace(/\D/g, '').slice(0, 20);
     if (key === 'secondary_market') v = /^(1|true|on|yes)$/i.test(v) ? '1' : '0';
     if (key === 'default_unlock_fee') v = String(listings.int(v, 1e7));
@@ -468,6 +472,8 @@ admin.post('/broadcast', (req, res) => {
 
 api.use(require('./extras')({ publicUser }));
 api.use(require('./invest'));
+const payscrow = require('./payscrow');
+api.use(payscrow.router);
 const experience = require('./experience');
 api.use(experience.router);
 // Shared hosts put idle apps to sleep, so the hourly jobs can also be triggered by a cron job:

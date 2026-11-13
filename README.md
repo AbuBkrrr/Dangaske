@@ -12,7 +12,7 @@ The site name is set with `SITE_NAME` in `.env`, so it can be changed in one pla
 | Phone sign-up, WhatsApp verification | Members enter a phone number and receive a 6-digit code on WhatsApp (WhatsApp Cloud API). Email is optional: members who add and confirm one also get codes, receipts and personal alerts by email. |
 | Easy-buy plans | Deposit + monthly instalments. Plans are edited in Admin → Easy-buy; each listing opts in. |
 | Manage listings from WhatsApp | Admins/agents message the business number: `NEW`, send photos/videos, `PUBLISH`, `SOLD 12`, `PRICE 12 …`, `EDIT`, `DELETE`, `LIST`. Send `HELP` for the menu. |
-| Escrow | Buyer pays in, funds are held, buyer confirms handover to release; disputes are settled by an admin (release or refund). |
+| Escrow | With a PayScrow key (docs/PAYSCROW.md) the money is held by PayScrow and released with the buyer's code or after a review period; otherwise buyer pays in, funds are held, buyer confirms handover to release; disputes are settled by an admin. |
 | Automatic compression | Photos become WebP (max 1600px) plus a thumbnail; videos become 720p H.264 (needs `ffmpeg`). Originals are deleted. |
 | Sold clean-up | Marking a listing sold deletes all its media except the cover photo. |
 | Push notifications | Members get web push + in-app alerts for new listings, sales, escrow and request matches. |

@@ -502,3 +502,111 @@ test('bank transfer payments: pay into the company account, admin confirms', asy
   assert.equal((await c('GET', `/api/payments/transfer/${pay2.body.reference}`)).body.status, 'failed');
   await admin('PUT', '/api/admin/settings', { bank_account_number: '' }); // back to card/demo for any later checks
 });
+
+test('PayScrow escrow: pay, webhook funds it, release by code, delivery review, disputes', async () => {
+  const crypto = require('crypto');
+  const config = require('../server/config');
+  const calls = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opts = {}) => {
+    if (!String(url).startsWith('https://api.payscrow.net')) return realFetch(url, opts);
+    const path = String(url).replace('https://api.payscrow.net', '');
+    const body = opts.body ? JSON.parse(opts.body) : null;
+    calls.push({ method: opts.method || 'GET', path, body, key: opts.headers.BrokerApiKey });
+    const ok = (o, status = 200) => new Response(JSON.stringify(o), { status });
+    if (path.endsWith('/transactions/start')) return ok({ success: true, data: { transactionNumber: `MKT-${calls.length}`, paymentLink: `https://payscrow.net/MarketPlace/Pay?transId=T${calls.length}`, totalPayable: 20150000, isSuccessful: true } });
+    if (path.endsWith('/fulfilment')) return ok({ isSuccessful: true, errors: [] });
+    if (path.endsWith('/applycode')) return ok(body.code === 'BAD' ? { success: false, message: 'Invalid code. Please ensure you have entered the correct code!', errors: ['Invalid code'] } : { message: 'Escrow Code applied successfully!', errors: [], isSuccessful: true }, body.code === 'BAD' ? 400 : 200);
+    if (path.endsWith('/raise-dispute')) return ok({ success: true, data: { isSuccessful: true } });
+    return ok({ success: true, data: { status: 'In Progress', inEscrow: true, inDispute: false } });
+  };
+  config.PAYSCROW_API_KEY = 'test-key';
+  config.PAYSCROW_WEBHOOK_SECRET = 'whsec_test';
+  try {
+    await admin('PUT', '/api/admin/settings', { contact_email: 'info@dangaskerealestate.com.ng', payscrow_merchant_charge_pct: 50 });
+    const buyerId = db.prepare("SELECT id FROM users WHERE phone = '2348022222222'").get().id;
+    db.prepare('UPDATE users SET email = ?, email_verified = 0 WHERE id = ?').run('buyer@example.com', buyerId);
+    const newEscrow = async (title) => {
+      const p = await admin('POST', '/api/properties', { title, price: 20000000, state: 'Kano', city: 'Kano' });
+      await admin('POST', `/api/properties/${p.body.id}/submit`);
+      const e = await buyer('POST', `/api/properties/${p.body.id}/escrow`, {});
+      assert.equal(e.status, 201, JSON.stringify(e.body));
+      assert.equal(e.body.fee, 0); // PayScrow's own charge applies, not ours
+      return { property: p.body.id, escrow: e.body.id };
+    };
+    const hook = async (payload, id) => {
+      const ts = Math.floor(Date.now() / 1000), raw = JSON.stringify(payload);
+      const sig = 'sha256=' + crypto.createHmac('sha256', 'whsec_test').update(`${ts}.${raw}`).digest('hex');
+      return fetch(`${base}/api/payscrow/webhook`, { method: 'POST', body: raw, headers: { 'Content-Type': 'application/json', 'X-PayScrow-Timestamp': String(ts), 'X-PayScrow-Signature': sig, 'X-PayScrow-Delivery-Id': id } });
+    };
+    const ref = (id) => db.prepare('SELECT ps_ref, ps_number FROM escrows WHERE id = ?').get(id);
+    const fund = async (id, guid, did) => {
+      const r = ref(id);
+      assert.equal((await hook({ transactionId: guid, transactionNumber: r.ps_number, externalReference: r.ps_ref, paymentStatus: 'Paid', escrowStatus: 'InEscrow', status: 'InProgress' }, did)).status, 200);
+    };
+    const state = (id) => db.prepare('SELECT status, ps_guid FROM escrows WHERE id = ?').get(id);
+
+    // --- pay
+    const a = await newEscrow('PayScrow house A');
+    assert.equal((await buyer('POST', `/api/escrows/${a.escrow}/pay`)).status, 400); // buyer's email is not confirmed
+    db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(buyerId);
+    const pay = await buyer('POST', `/api/escrows/${a.escrow}/pay`);
+    assert.equal(pay.status, 200, JSON.stringify(pay.body));
+    assert.match(pay.body.url, /^https:\/\/payscrow\.net\/MarketPlace\/Pay/);
+    const start = calls.find((c) => c.path.endsWith('/transactions/start'));
+    assert.equal(start.key, 'test-key');
+    assert.deepEqual([start.body.items[0].price, start.body.customerPhoneNo, start.body.merchantEmailAddress, start.body.merchantChargePercentage, start.body.currencyCode], [20000000, '08022222222', 'info@dangaskerealestate.com.ng', 50, 'NGN']);
+    assert.equal(db.prepare('SELECT amount, provider FROM payments WHERE reference = ?').get(ref(a.escrow).ps_ref).provider, 'payscrow');
+    assert.equal((await buyer('POST', `/api/escrows/${a.escrow}/pay`)).body.url, pay.body.url); // same payment page, no second transaction
+    assert.equal(calls.filter((c) => c.path.endsWith('/transactions/start')).length, 1);
+
+    // --- webhook funds the escrow
+    const forged = await fetch(`${base}/api/payscrow/webhook`, { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json', 'X-PayScrow-Timestamp': String(Math.floor(Date.now() / 1000)), 'X-PayScrow-Signature': 'sha256=00' } });
+    assert.equal(forged.status, 401);
+    assert.equal((await buyer('POST', `/api/escrows/${a.escrow}/release`, { code: 'ABC123' })).status, 409); // not funded yet
+    await fund(a.escrow, 'guid-A', 'del-1');
+    assert.deepEqual(state(a.escrow), { status: 'funded', ps_guid: 'guid-A' });
+    assert.equal((await (await hook({ transactionId: 'x', transactionNumber: ref(a.escrow).ps_number, externalReference: ref(a.escrow).ps_ref, paymentStatus: 'Paid' }, 'del-1')).json()).duplicate, true); // retries are ignored
+
+    // --- seller reports delivery; buyer releases with the code
+    assert.equal((await admin('POST', `/api/escrows/${a.escrow}/delivery`, { notes: 'short' })).status, 400);
+    assert.equal((await buyer('POST', `/api/escrows/${a.escrow}/delivery`, { notes: 'Keys and documents handed over' })).status, 404); // not the seller
+    assert.equal((await admin('POST', `/api/escrows/${a.escrow}/delivery`, { notes: 'Keys and documents handed over on site' })).status, 200);
+    const fulfil = calls.find((c) => c.path.endsWith('/fulfilment'));
+    assert.deepEqual(fulfil.body.evidenceLinks, [`${config.BASE_URL}/p/${a.property}`]);
+    assert.equal((await admin('POST', `/api/escrows/${a.escrow}/delivery`, { notes: 'Keys and documents handed over on site' })).status, 409);
+    assert.equal((await admin('POST', `/api/escrows/${a.escrow}/release`, { code: 'ABC123' })).status, 403); // only the buyer holds the code
+    assert.equal((await buyer('POST', `/api/escrows/${a.escrow}/release`, {})).status, 400); // code required
+    assert.equal((await buyer('POST', `/api/escrows/${a.escrow}/release`, { code: 'BAD' })).status, 400);
+    assert.equal(state(a.escrow).status, 'funded'); // a wrong code releases nothing
+    assert.equal((await buyer('POST', `/api/escrows/${a.escrow}/release`, { code: 'ABC123' })).status, 200);
+    assert.deepEqual(calls.find((c) => c.path.endsWith('/applycode') && c.body.code === 'ABC123').body, { transactionId: 'guid-A', code: 'ABC123' });
+    assert.equal(state(a.escrow).status, 'released');
+    assert.equal((await anon('GET', `/api/properties/${a.property}`)).body.status, 'sold');
+
+    // --- dispute, resolved by PayScrow as a refund
+    const b = await newEscrow('PayScrow house B');
+    await buyer('POST', `/api/escrows/${b.escrow}/pay`); await fund(b.escrow, 'guid-B', 'del-2');
+    assert.equal((await buyer('POST', `/api/escrows/${b.escrow}/dispute`, { note: 'no' })).status, 400);
+    assert.equal((await buyer('POST', `/api/escrows/${b.escrow}/dispute`, { note: 'The seller never showed up with the keys.' })).status, 200);
+    assert.equal(calls.find((c) => c.path.endsWith('/raise-dispute')).body.requestedBy, 'customer');
+    assert.equal(state(b.escrow).status, 'disputed');
+    assert.equal((await admin('POST', `/api/escrows/${b.escrow}/refund`, { note: 'x' })).status, 409); // PayScrow decides
+    await hook({ event: 'dispute.status_changed', eventId: 'e1', transactionNumber: ref(b.escrow).ps_number, externalReference: ref(b.escrow).ps_ref, disputeStage: 'Resolved', resolutionType: 'Refund', disputeReference: 'DIS-1' }, 'del-3');
+    assert.equal(state(b.escrow).status, 'refunded');
+    assert.equal((await anon('GET', `/api/properties/${b.property}`)).body.status, 'active'); // back on the market
+
+    // --- automatic release after the customer review period
+    const c = await newEscrow('PayScrow house C');
+    await buyer('POST', `/api/escrows/${c.escrow}/pay`); await fund(c.escrow, 'guid-C', 'del-4');
+    await hook({ event: 'transaction.review_started', eventId: 'e2', transactionNumber: ref(c.escrow).ps_number, externalReference: ref(c.escrow).ps_ref, reviewDueUtc: '2026-12-01T10:00:00Z' }, 'del-5');
+    assert.equal(db.prepare('SELECT ps_review_due FROM escrows WHERE id = ?').get(c.escrow).ps_review_due, '2026-12-01 10:00:00');
+    await hook({ event: 'transaction.release_authorized', eventId: 'e3', transactionNumber: ref(c.escrow).ps_number, externalReference: ref(c.escrow).ps_ref }, 'del-6');
+    assert.equal(state(c.escrow).status, 'released');
+    assert.equal((await anon('GET', `/api/properties/${c.property}`)).body.status, 'sold');
+  } finally {
+    global.fetch = realFetch;
+    config.PAYSCROW_API_KEY = '';
+    config.PAYSCROW_WEBHOOK_SECRET = '';
+  }
+});
