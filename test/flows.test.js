@@ -391,3 +391,12 @@ test('request fee is set by admin', async () => {
   const adminReq = await admin('POST', '/api/requests', { type: 'land', details: 'Admin request' });
   assert.equal(adminReq.body.url, undefined); // admins are not charged
 });
+
+test('contact form forwards to the company email', async () => {
+  const mail = require('../server/mail');
+  const sent = []; const orig = mail.send; mail.send = async (...a) => { sent.push(a); return true; };
+  await admin('PUT', '/api/admin/settings', { contact_email: 'info@dangaskerealestate.com.ng' });
+  assert.equal((await anon('POST', '/api/reports', { kind: 'contact', name: 'Aisha', contact: '08031112222', message: 'I want to list my estate.' })).status, 201);
+  mail.send = orig;
+  assert.ok(sent.some(([to, subject]) => to === 'info@dangaskerealestate.com.ng' && /Aisha/.test(subject)));
+});

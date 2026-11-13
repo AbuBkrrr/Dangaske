@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
 const config = require('./config');
-const { db } = require('./db');
+const { db, getSetting } = require('./db');
 const { HttpError, requireAuth, requireRole, rateLimit } = require('./auth');
 const listings = require('./listings');
 const push = require('./push');
@@ -179,6 +179,12 @@ module.exports = ({ publicUser }) => {
     db.prepare('INSERT INTO reports(user_id, property_id, kind, name, contact, message) VALUES(?,?,?,?,?,?)')
       .run(req.user ? req.user.id : null, prop ? prop.id : null, kind, str(b.name, 80) || (req.user ? req.user.name : ''), str(b.contact, 120) || (req.user ? '+' + req.user.phone : ''), message);
     push.notifyAdmins({ title: kind === 'contact' ? 'New contact message' : 'Trust report received', body: message.slice(0, 120), url: '/admin?tab=reports' });
+    // Also forward to the company inbox when one is set in Admin > Settings.
+    const inbox = getSetting('contact_email');
+    if (inbox) {
+      const from = `${str(b.name, 80) || (req.user ? req.user.name : '') || 'Visitor'} (${str(b.contact, 120) || (req.user ? '+' + req.user.phone : 'no contact given')})`;
+      mail.send(inbox, `${kind === 'contact' ? 'Contact form' : 'Trust report: ' + kind} - ${from}`, `${message}${prop ? `\n\nListing: ${config.BASE_URL}/p/${prop.id}` : ''}\n\nFrom: ${from}`);
+    }
     res.status(201).json({ ok: true });
   });
 
