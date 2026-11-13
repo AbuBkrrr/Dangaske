@@ -59,7 +59,7 @@
         <select name="beds" aria-label="Bedrooms">${opts([1, 2, 3, 4, 5].map((n) => [n, n + '+ beds']), '', 'Any beds')}</select>
         <input name="max" inputmode="numeric" placeholder="Max price ₦" aria-label="Maximum price">
         <button class="btn gold">Search</button></form>
-      <div class="hlinks"><a href="/listings" data-link>⚙ Advanced filters</a><a href="/map" data-link>🗺 Map search</a><a href="/dashboard?tab=saved" data-link>🔔 Saved searches</a><a href="/listings?easy=1" data-link>Easy-buy</a><a href="/invest" data-link>Invest</a><span>Verified listings · Escrow ready · Fraud protection</span></div>
+      <div class="hlinks"><a href="/listings" data-link>⚙ Advanced filters</a><a href="/map" data-link>🗺 Map search</a><a href="/dashboard?tab=saved" data-link>🔔 Saved searches</a><a href="/listings?easy=1" data-link>Easy-buy</a><a href="/invest" data-link>Invest</a><a class="btn gold sm" href="/request" data-link>＋ Request a property</a><span>Verified listings · Escrow ready · Fraud protection</span></div>
     </div></div>
     <section class="sec"><span class="kicker">Featured properties</span><div class="spread"><h2>Verified inventory, curated for discovery.</h2><a href="/listings?featured=1" data-link>View all properties →</a></div>${feat.items.length ? cards(feat.items, '') : '<p class="muted">Verified listings appear here as inventory is published to the marketplace.</p>'}</section>
     <section class="sec"><span class="kicker">Recently added</span><div class="spread"><h2>Newly published listings.</h2><a href="/listings" data-link>Browse marketplace →</a></div>${cards(recent.items, 'No properties yet. Check back soon.')}</section>

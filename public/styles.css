@@ -221,3 +221,9 @@ pre.code { background: #0e0e40; color: #dfe2f7; padding: 14px; border-radius: 10
 .std .card { padding: 16px 10px; } .sicon { font-size: 1.5rem; margin-bottom: 4px; }
 .band { background: linear-gradient(120deg, var(--navy), #1d2a73); } .foot { background: var(--navy); }
 body { background: var(--bg); }
+
+/* bigger logo + request call-to-action */
+.top-in { min-height: 96px; } .brand img { width: 80px; height: 80px; } .side { top: 112px; }
+.nav .navcta { color: #fff; border: 1px solid rgba(255,255,255,.4); padding: 4px 12px; border-radius: 99px; } .nav .navcta:hover { background: var(--gold); border-color: var(--gold); color: #fff; }
+@media (max-width: 860px) { .top-in { min-height: 72px; } .brand img { width: 56px; height: 56px; } .nav { top: 72px; } }
+@media (min-width: 861px) { .brand span { position: absolute; left: -9999px; } .nav { gap: 16px; } }

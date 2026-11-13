@@ -318,7 +318,7 @@ listings.hooks.onPublish.push((p) => {
 
 // =========================================================== payments history, receipts, document vault
 
-const LABELS = { unlock: 'Listing details access', escrow: 'Escrow payment', installment: 'Easy-buy instalment', investment: 'SPV units', inspection: 'Inspection fee', title_check: 'Title verification report', unit_trade: 'SPV units (resale)' };
+const LABELS = { unlock: 'Listing details access', escrow: 'Escrow payment', installment: 'Easy-buy instalment', investment: 'SPV units', inspection: 'Inspection fee', request: 'Property request fee', title_check: 'Title verification report', unit_trade: 'SPV units (resale)' };
 function describe(pay) {
   const one = (sql) => db.prepare(sql).get(pay.target_id);
   const row = {
@@ -326,6 +326,7 @@ function describe(pay) {
     escrow: () => one('SELECT p.title FROM escrows e JOIN properties p ON p.id = e.property_id WHERE e.id = ?'),
     installment: () => one('SELECT p.title FROM installments i JOIN subscriptions s ON s.id = i.subscription_id JOIN properties p ON p.id = s.property_id WHERE i.id = ?'),
     investment: () => one('SELECT s.title FROM investments i JOIN spvs s ON s.id = i.spv_id WHERE i.id = ?'),
+    request: () => one("SELECT COALESCE(NULLIF(type,''),'Property') || ' request' AS title FROM requests WHERE id = ?"),
     inspection: () => one('SELECT p.title FROM inspections i JOIN properties p ON p.id = i.property_id WHERE i.id = ?'),
     title_check: () => one('SELECT p.title FROM title_checks t JOIN properties p ON p.id = t.property_id WHERE t.id = ?'),
     unit_trade: () => one('SELECT s.title FROM unit_listings u JOIN spvs s ON s.id = u.spv_id WHERE u.id = ?'),

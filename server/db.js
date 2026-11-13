@@ -239,6 +239,7 @@ const DEFAULT_SETTINGS = {
   escrow_fee_pct: '1.5',
   support_whatsapp: '2348037572052',
   phones: '+234 803 757 2052, +234 816 130 4050',
+  request_fee: '2000',        // paid by a buyer/agent to publish a property request (0 = free)
   inspection_fee: '5000',     // paid to confirm an inspection appointment; credited towards the purchase
   title_check_fee: '25000',   // title verification report
   referral_reward: '0',       // naira paid to a referrer when the person they invited buys

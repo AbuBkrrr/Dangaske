@@ -115,6 +115,9 @@ test('agent listing needs approval; property requests', async () => {
   assert.equal((await agent('PATCH', `/api/properties/${propId}`, { price: 1 })).status, 403);
   const req = await buyer('POST', '/api/requests', { purpose: 'sale', type: 'land', state: 'Kano', max_price: 6000000, details: 'Need a dry plot' });
   assert.equal(req.status, 201);
+  assert.match(req.body.url, /pay\/demo/); // a request is paid for first
+  assert.equal((await anon('GET', '/api/requests')).body.length, 0); // unpaid requests stay hidden
+  await buyer('POST', `/api/payments/demo/${req.body.reference}`);
   assert.equal((await anon('GET', '/api/requests')).body[0].contact_phone, undefined);
   assert.equal((await agent('GET', '/api/requests')).body[0].contact_phone, '2348022222222');
   assert.equal((await agent('POST', `/api/admin/properties/${p.body.id}/approve`)).status, 403);
@@ -374,4 +377,17 @@ test('email alongside WhatsApp; cron endpoint', async () => {
   assert.equal((await anon('POST', '/api/auth/request-otp', { phone: '08099998888' })).status, 429); // per-IP limit on code requests
   assert.equal((await anon('GET', '/api/cron?key=x')).status, 404); // disabled without CRON_KEY
   assert.equal(typeof app.start, 'function');
+});
+
+test('request fee is set by admin', async () => {
+  await admin('PUT', '/api/admin/settings', { request_fee: 0 });
+  const free = await buyer('POST', '/api/requests', { type: 'house', state: 'Kano', details: 'Free request' });
+  assert.equal(free.body.url, undefined);
+  assert.ok((await anon('GET', '/api/requests')).body.some((r) => r.details === 'Free request'));
+  await admin('PUT', '/api/admin/settings', { request_fee: 3500 });
+  assert.equal((await anon('GET', '/api/me')).body.config.request_fee, 3500);
+  const paid = await buyer('POST', '/api/requests', { type: 'land', details: 'Paid request' });
+  assert.equal(db.prepare('SELECT amount FROM payments WHERE reference = ?').get(paid.body.reference).amount, 3500);
+  const adminReq = await admin('POST', '/api/requests', { type: 'land', details: 'Admin request' });
+  assert.equal(adminReq.body.url, undefined); // admins are not charged
 });

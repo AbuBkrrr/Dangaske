@@ -105,7 +105,7 @@ api.get('/me', (req, res) => {
       default_unlock_fee: Number(s.default_unlock_fee),
       escrow_fee_pct: Number(s.escrow_fee_pct),
       support_whatsapp: s.support_whatsapp,
-      inspection_fee: Number(s.inspection_fee), title_check_fee: Number(s.title_check_fee), referral_reward: Number(s.referral_reward), secondary_market: s.secondary_market === '1',
+      request_fee: Number(s.request_fee), inspection_fee: Number(s.inspection_fee), title_check_fee: Number(s.title_check_fee), referral_reward: Number(s.referral_reward), secondary_market: s.secondary_market === '1',
       phones: s.phones, rc_number: config.RC_NUMBER,
       contact_email: s.contact_email,
       office_address: s.office_address,
@@ -266,22 +266,40 @@ api.post('/paystack/webhook', async (req, res) => {
 
 // ---------- Property requests ----------
 
-api.post('/requests', requireAuth, (req, res) => {
+function announceRequest(id) {
+  const r = db.prepare('SELECT * FROM requests WHERE id = ?').get(id);
+  if (!r) return;
+  const where = [r.city, r.state].filter(Boolean).join(', ');
+  const summary = `${r.type || 'Property'} for ${r.purpose}${where ? ' in ' + where : ''}`;
+  push.notifyAdmins({ title: 'New property request', body: summary, url: '/requests' });
+  for (const a of db.prepare("SELECT id FROM users WHERE role = 'agent' AND id != ?").all(r.user_id)) {
+    push.notify({ userId: a.id, title: 'New property request', body: summary, url: '/requests' });
+  }
+}
+
+// A request is published once its fee is paid.
+payments.handlers.request = (pay, already, after) => {
+  const r = db.prepare('SELECT * FROM requests WHERE id = ?').get(pay.target_id);
+  if (!already && r && r.status === 'awaiting_payment') {
+    db.prepare("UPDATE requests SET status = 'open' WHERE id = ?").run(r.id);
+    after.push(() => announceRequest(r.id));
+  }
+  return { redirect: '/requests', message: 'Request published. Agents have been alerted.' };
+};
+
+api.post('/requests', requireAuth, async (req, res) => {
   const b = req.body;
   const details = listings.str(b.details, 1500);
   const purpose = listings.PURPOSES.includes(b.purpose) ? b.purpose : 'sale';
   const type = listings.TYPES.includes(b.type) ? b.type : '';
   if (!type && !details) throw new HttpError(400, 'Tell us what kind of property you need.');
+  const fee = req.user.role === 'admin' ? 0 : listings.int(allSettings().request_fee, 1e7);
   const id = db
-    .prepare('INSERT INTO requests(user_id, purpose, type, state, city, min_price, max_price, bedrooms, details, contact_phone) VALUES(?,?,?,?,?,?,?,?,?,?)')
+    .prepare('INSERT INTO requests(user_id, purpose, type, state, city, min_price, max_price, bedrooms, details, contact_phone, status) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
     .run(req.user.id, purpose, type, listings.str(b.state, 60), listings.str(b.city, 60), listings.int(b.min_price), listings.int(b.max_price),
-      listings.int(b.bedrooms, 50), details, listings.str(b.contact_phone, 30) || req.user.phone).lastInsertRowid;
-  const where = [listings.str(b.city, 60), listings.str(b.state, 60)].filter(Boolean).join(', ');
-  const summary = `${type || 'Property'} for ${purpose}${where ? ' in ' + where : ''}`;
-  push.notifyAdmins({ title: 'New property request', body: summary, url: '/requests' });
-  for (const a of db.prepare("SELECT id FROM users WHERE role = 'agent' AND id != ?").all(req.user.id)) {
-    push.notify({ userId: a.id, title: 'New property request', body: summary, url: '/requests' });
-  }
+      listings.int(b.bedrooms, 50), details, listings.str(b.contact_phone, 30) || req.user.phone, fee > 0 ? 'awaiting_payment' : 'open').lastInsertRowid;
+  if (fee > 0) return res.status(201).json({ id, ...(await payments.start(req.user, 'request', id, fee)) });
+  announceRequest(id);
   res.status(201).json({ id });
 });
 
@@ -398,7 +416,7 @@ admin.put('/settings', (req, res) => {
         v = JSON.stringify(Object.fromEntries(Object.entries(r).filter(([k, n]) => /^[A-Z]{3}$/.test(k) && Number(n) > 0).slice(0, 8)));
       } catch { continue; }
     }
-    if (['inspection_fee', 'title_check_fee', 'referral_reward'].includes(key)) v = String(listings.int(v, 1e8));
+    if (['inspection_fee', 'title_check_fee', 'referral_reward', 'request_fee'].includes(key)) v = String(listings.int(v, 1e8));
     if (key === 'secondary_market') v = /^(1|true|on|yes)$/i.test(v) ? '1' : '0';
     if (key === 'default_unlock_fee') v = String(listings.int(v, 1e7));
     if (key === 'escrow_fee_pct') v = String(Math.min(Math.max(Number(v) || 0, 0), 20));
@@ -524,6 +542,7 @@ app.use((err, _req, res, _next) => {
 function sweep() {
   db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
   db.prepare('DELETE FROM otps WHERE expires_at < ?').run(Date.now());
+  db.prepare("DELETE FROM requests WHERE status = 'awaiting_payment' AND created_at < datetime('now','-2 days')").run();
   for (const f of fs.readdirSync(config.TMP_DIR)) {
     const full = path.join(config.TMP_DIR, f);
     try { if (Date.now() - fs.statSync(full).mtimeMs > 6 * 3600 * 1000) fs.unlinkSync(full); } catch { /* ignore */ }
