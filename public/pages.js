@@ -338,6 +338,32 @@
     <h2>Translation</h2><p>If you switch language, page text is sent to Google Translate to be translated.</p>
     <h2>Retention and your rights</h2><p>We keep records for as long as your account is open and as the law requires for financial records. You may ask to access, correct or delete your data through the <a href="/contact" data-link>contact page</a>.</p>`));
 
+  // ---------- bank transfer checkout ----------
+  DG.ACTIONS.copytxt = async (b) => { try { await navigator.clipboard.writeText(b.dataset.v); toast('Copied.'); } catch { prompt('Copy this', b.dataset.v); } };
+  route(/^\/pay\/transfer$/, async (_m, q) => {
+    if (needLogin()) return (app.innerHTML = '<p class="pad center muted">Sign in to continue.</p>');
+    const ref = q.get('reference');
+    const draw = async () => {
+      const p = await api('/payments/transfer/' + encodeURIComponent(ref));
+      const copy = (v) => `<button class="btn sm ghost" data-act="copytxt" data-v="${e(v)}">Copy</button>`;
+      app.innerHTML = p.status === 'paid'
+        ? `<div class="card center" style="max-width:520px;margin:40px auto"><h2>✔ Payment confirmed</h2><p class="muted">We received <b class="notranslate">${money(p.amount)}</b> for ${e(p.label)}${p.item ? ` — ${e(p.item)}` : ''}.</p><a class="btn gold" href="/dashboard" data-link>Continue</a></div>`
+        : p.status === 'failed' ? '<div class="card center" style="max-width:520px;margin:40px auto"><h2>Transfer not matched</h2><p class="muted">We could not match this transfer. Please contact us.</p><a class="btn" href="/contact" data-link>Contact us</a></div>'
+        : `<div class="card" id="tpage" style="max-width:560px;margin:30px auto"><h2>Pay by bank transfer</h2>
+          <p class="muted">${e(p.label)}${p.item ? ` — ${e(p.item)}` : ''}</p>
+          <p class="price notranslate" style="font-size:2rem;margin:6px 0">${money(p.amount)}</p>
+          ${p.bank ? `<table><tr><td class="muted">Bank</td><td><b>${e(p.bank.bank)}</b></td><td></td></tr><tr><td class="muted">Account number</td><td><b class="notranslate" style="font-size:1.2rem">${e(p.bank.number)}</b></td><td>${copy(p.bank.number)}</td></tr><tr><td class="muted">Account name</td><td><b>${e(p.bank.name)}</b></td><td></td></tr><tr><td class="muted">Narration / reference</td><td><b class="notranslate">${e(p.reference)}</b></td><td>${copy(p.reference)}</td></tr></table>` : '<p class="demo">Bank details are not set up yet. Please contact us.</p>'}
+          <ol class="small"><li>Transfer exactly <b class="notranslate">${money(p.amount)}</b> to the account above.</li><li>Put <b class="notranslate">${e(p.reference)}</b> in the narration so we can match it.</li><li>Upload your bank receipt and tap “I have paid”. We confirm it as soon as the money arrives, then your booking or purchase is completed.</li></ol>
+          ${p.claimed_at ? `<div class="demo">✔ Thank you${p.sender ? ', ' + e(p.sender) : ''}. We are checking for your payment and will notify you. You can leave this page.</div>`
+            : '<form id="clm" class="grid"><div><label>Upload your transfer receipt <span class="small muted">(screenshot or PDF from your bank app)</span></label><input type="file" name="receipt" accept="image/jpeg,image/png,image/webp,application/pdf" required></div><div><label>Name on the account you paid from <span class="small muted">(helps us find it)</span></label><input name="sender" maxlength="100"></div><button class="btn gold block">I have paid</button></form>'}
+          <p class="small muted" style="margin-top:10px">Reference <span class="notranslate">${e(p.reference)}</span>. Pending transfers are also listed under Dashboard → Receipts.</p></div>`;
+      const f = $('#clm');
+      if (f) f.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', f), async () => { await api(`/payments/transfer/${encodeURIComponent(ref)}/claim`, { method: 'POST', form: new FormData(f) }); toast('Thanks. We will confirm your payment shortly.'); draw(); }); });
+      if (p.status === 'pending' && p.claimed_at) setTimeout(() => { if ($('#tpage')) draw().catch(() => {}); }, 15000);
+    };
+    await draw();
+  });
+
   // ---------- dashboard tabs ----------
   DG.dashTabs.overview = async () => {
     const u = S.user, pro = ['agent', 'admin'].includes(u.role), mt = await meta();
@@ -385,6 +411,15 @@
       <p class="row" style="margin-top:8px">${Object.keys(f).map((x) => `<a class="btn sm ghost" href="/api/admin/kyc/${u.id}/file?doc=${x}" target="_blank" rel="noopener">${KYC_DOCS[x] || x} ↗</a>`).join('')}</p></div>`; }).join('') || '<p class="muted">Nothing waiting.</p>'}
       <p class="small muted">Approving adds the verified badge and lets agents, agencies, developers and service providers post. Listings are verified separately from the Listings tab.</p>`;
   };
+  DG.adminTabs.transfers = async () => {
+    const rows = await api('/admin/transfers');
+    const pending = rows.filter((x) => x.status === 'pending');
+    return `<div class="demo">Confirm a payment <b>only after you see the money</b> in the company bank account with the matching amount and reference. Confirming completes the member's booking, purchase, plan payment or request automatically.</div>
+      <h3 style="margin-top:16px">Awaiting confirmation (${pending.length})</h3>
+      ${pending.length ? `<div class="tablewrap"><table><tr><th>Claimed</th><th>Member</th><th>For</th><th>Amount</th><th>Reference</th><th>Paid from</th><th></th></tr>${pending.map((x) => `<tr><td class="nowrap">${date(x.claimed_at)}</td><td class="notranslate">${e(x.user_name)}<br>+${e(x.user_phone)}</td><td>${e(x.label)}${x.item ? `<br><span class="small muted">${e(x.item)}</span>` : ''}</td><td class="notranslate"><b>${money(x.amount)}</b></td><td class="notranslate"><b>${e(x.reference)}</b></td><td>${e(x.sender || '—')}${x.has_proof ? `<br><a href="/api/admin/transfers/${x.id}/proof" target="_blank" rel="noopener">Receipt ↗</a>` : ''}</td>
+        <td><div class="row"><button class="btn sm" data-tconf="${x.id}">Money received — confirm</button><button class="btn sm ghost" data-trej="${x.id}">Not found</button></div></td></tr>`).join('')}</table></div>` : '<p class="muted">Nothing waiting.</p>'}
+      <h3 style="margin-top:22px">Recently confirmed</h3>${rows.filter((x) => x.status === 'paid').map((x) => `<div class="small">${date(x.paid_at)} · <span class="notranslate">${money(x.amount)}</span> · ${e(x.label)} · ${e(x.user_name)} · <span class="notranslate">${e(x.reference)}</span></div>`).join('') || '<p class="muted small">None yet.</p>'}`;
+  };
   DG.adminTabs.reports = async () => {
     const t = await getTrust(), r = t.risk;
     return `<div class="stats" style="margin-bottom:16px"><div class="stat"><b>${r.open_reports}</b>Open trust reports</div><div class="stat"><b>${r.pending_kyc}</b>ID checks pending</div><div class="stat"><b>${r.disputes}</b>Escrow disputes</div><div class="stat"><b>${r.suspended}</b>Suspended accounts</div><div class="stat"><b>${r.failed_payments}</b>Failed payments (7 days)</div><div class="stat"><b>${r.unverified_agents}</b>Unverified agents</div></div>
@@ -414,6 +449,8 @@
   };
   DG.adminBind = () => {
     const post = (sel, attr, fn) => app.querySelectorAll(sel).forEach((b) => b.addEventListener('click', () => busy(b, async () => { await fn(b, b.getAttribute(attr)); render(); })));
+    post('[data-tconf]', 'data-tconf', (_b, id) => (confirm('Confirm that this money has arrived in the bank account?') ? api(`/admin/transfers/${id}/confirm`, { method: 'POST' }) : null));
+    post('[data-trej]', 'data-trej', (_b, id) => { const reason = prompt('Note to the member (optional):'); return reason === null ? null : api(`/admin/transfers/${id}/reject`, { method: 'POST', body: { reason } }); });
     post('[data-sus]', 'data-sus', (b, id) => api(`/admin/users/${id}/suspend`, { method: 'POST', body: { suspended: b.dataset.v === '1' } }));
     post('[data-res]', 'data-res', (_b, id) => api(`/admin/reports/${id}/resolve`, { method: 'POST' }));
     post('[data-delpost]', 'data-delpost', (_b, id) => (confirm('Delete this article?') ? api(`/admin/posts/${id}`, { method: 'DELETE' }) : null));

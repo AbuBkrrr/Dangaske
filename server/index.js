@@ -110,7 +110,7 @@ api.get('/me', (req, res) => {
       default_unlock_fee: Number(s.default_unlock_fee),
       escrow_fee_pct: Number(s.escrow_fee_pct),
       support_whatsapp: s.support_whatsapp,
-      request_fee: Number(s.request_fee), inspection_fee: Number(s.inspection_fee), title_check_fee: Number(s.title_check_fee), referral_reward: Number(s.referral_reward), secondary_market: s.secondary_market === '1',
+      pay_by_transfer: Boolean(payments.bankDetails()), request_fee: Number(s.request_fee), inspection_fee: Number(s.inspection_fee), title_check_fee: Number(s.title_check_fee), referral_reward: Number(s.referral_reward), secondary_market: s.secondary_market === '1',
       phones: s.phones, rc_number: config.RC_NUMBER,
       contact_email: s.contact_email,
       office_address: s.office_address,
@@ -424,6 +424,7 @@ admin.put('/settings', (req, res) => {
       } catch { continue; }
     }
     if (['inspection_fee', 'title_check_fee', 'referral_reward', 'request_fee'].includes(key) || key.startsWith('insp_')) v = String(listings.int(v, 1e8));
+    if (key === 'bank_account_number') v = v.replace(/\D/g, '').slice(0, 20);
     if (key === 'secondary_market') v = /^(1|true|on|yes)$/i.test(v) ? '1' : '0';
     if (key === 'default_unlock_fee') v = String(listings.int(v, 1e7));
     if (key === 'escrow_fee_pct') v = String(Math.min(Math.max(Number(v) || 0, 0), 20));
@@ -549,6 +550,7 @@ app.use((err, _req, res, _next) => {
 function sweep() {
   db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
   db.prepare('DELETE FROM otps WHERE expires_at < ?').run(Date.now());
+  db.prepare("DELETE FROM payments WHERE provider = 'transfer' AND status = 'pending' AND claimed_at IS NULL AND created_at < datetime('now','-3 days')").run();
   db.prepare("DELETE FROM requests WHERE status = 'awaiting_payment' AND created_at < datetime('now','-2 days')").run();
   for (const f of fs.readdirSync(config.TMP_DIR)) {
     const full = path.join(config.TMP_DIR, f);

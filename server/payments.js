@@ -23,9 +23,23 @@ async function paystack(method, path, body) {
   return json.data;
 }
 
+/** The company account customers pay into. Set in Admin > Settings; when present, bank transfer is the payment method. */
+function bankDetails() {
+  const number = String(getSetting('bank_account_number') || '').replace(/\D/g, '');
+  const name = String(getSetting('bank_account_name') || '').trim();
+  return number && name ? { bank: String(getSetting('bank_name') || '').trim(), number, name } : null;
+}
+
 /** Start a payment. Returns { reference, url } - the browser is sent to url. */
 async function start(user, purpose, targetId, amount) {
   if (!(amount > 0)) throw new HttpError(400, 'Nothing to pay.');
+  if (bankDetails()) {
+    // Bank transfer: the customer pays into the company account quoting this reference; an admin confirms receipt.
+    const reference = `DG-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    db.prepare('INSERT INTO payments(reference, user_id, purpose, target_id, amount, provider) VALUES(?,?,?,?,?,?)')
+      .run(reference, user.id, purpose, targetId, amount, 'transfer');
+    return { reference, url: `/pay/transfer?reference=${reference}` };
+  }
   if (DEMO && !config.DEMO_PAYMENTS_OK) throw new HttpError(503, 'Payments are not configured yet. Please contact support.');
   const reference = `DG-${purpose.slice(0, 3).toUpperCase()}-${crypto.randomBytes(9).toString('hex')}`;
   db.prepare('INSERT INTO payments(reference, user_id, purpose, target_id, amount, provider) VALUES(?,?,?,?,?,?)')
@@ -311,7 +325,7 @@ function cancelEscrow(user, id) {
 }
 
 module.exports = {
-  DEMO, handlers, start, verify, demoConfirm, demoInfo, webhook,
+  DEMO, handlers, bankDetails, fulfil, start, verify, demoConfirm, demoInfo, webhook,
   quote, subscribe, subscriptionsFor, payInstallment,
   createEscrow, escrowsFor, payEscrow, releaseEscrow, disputeEscrow, refundEscrow, cancelEscrow,
 };

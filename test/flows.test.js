@@ -463,3 +463,42 @@ test('services directory lists only verified providers, by category', async () =
   assert.equal((await anon('GET', '/api/agents?type=service')).body.length, 0); // unverified providers stay hidden
   db.prepare("UPDATE users SET verified = 1, account_type = 'agency' WHERE phone = '2348033333333'").run();
 });
+
+test('bank transfer payments: pay into the company account, admin confirms', async () => {
+  assert.equal((await anon('GET', '/api/me')).body.config.pay_by_transfer, false);
+  await admin('PUT', '/api/admin/settings', { bank_name: 'Test MFB', bank_account_number: '0123 456 789', bank_account_name: 'Test Account' });
+  assert.equal((await anon('GET', '/api/me')).body.config.pay_by_transfer, true);
+  const c = buyer;
+  const p = await admin('POST', '/api/properties', { title: 'Transfer house', price: 3000000, purpose: 'rent', state: 'Kano' });
+  await admin('POST', `/api/properties/${p.body.id}/submit`);
+  const day = new Date(Date.now() + 9 * 86400e3).toISOString().slice(0, 10);
+  const pay = await c('POST', `/api/properties/${p.body.id}/inspections`, { slot: `${day}T14:00` });
+  assert.match(pay.body.url, /^\/pay\/transfer\?reference=DG-[0-9A-F]{8}$/);
+  const info = (await c('GET', `/api/payments/transfer/${pay.body.reference}`)).body;
+  assert.deepEqual([info.amount, info.bank.number, info.bank.name, info.status, info.label], [5000, '0123456789', 'Test Account', 'pending', 'Inspection fee']);
+  assert.equal((await agent('GET', `/api/payments/transfer/${pay.body.reference}`)).status, 404); // someone else's payment
+  assert.equal((await admin('GET', '/api/admin/transfers')).body.length, 0); // unclaimed ones are not listed
+  assert.equal((await c('GET', '/api/my/pending-payments')).body.length, 1);
+  const receipt = async (sender = 'Musa Ready') => { const f = new FormData(); f.append('sender', sender); f.append('receipt', new Blob([await png(200, 300)], { type: 'image/png' }), 'receipt.png'); return f; };
+  assert.equal((await c('POST', `/api/payments/transfer/${pay.body.reference}/claim`, null, (() => { const f = new FormData(); f.append('sender', 'No file'); return f; })())).status, 400); // a receipt is required
+  assert.equal((await agent('POST', `/api/payments/transfer/${pay.body.reference}/claim`, null, await receipt())).status, 404); // not their payment
+  assert.equal((await c('POST', `/api/payments/transfer/${pay.body.reference}/claim`, null, await receipt())).status, 200);
+  const list = (await admin('GET', '/api/admin/transfers')).body;
+  assert.deepEqual([list.length, list[0].sender, list[0].amount], [1, 'Musa Ready', 5000]);
+  assert.equal(list[0].has_proof, true);
+  assert.equal((await admin('GET', `/api/admin/transfers/${list[0].id}/proof`)).status, 200);
+  assert.equal((await c('GET', `/api/admin/transfers/${list[0].id}/proof`)).status, 403); // receipts are private
+  assert.equal((await c('POST', `/api/admin/transfers/${list[0].id}/confirm`)).status, 403); // members cannot confirm their own
+  assert.equal((await anon('GET', `/api/properties/${p.body.id}/slots?date=${day}`)).body.booked.length, 0); // not confirmed yet
+  assert.equal((await admin('POST', `/api/admin/transfers/${list[0].id}/confirm`)).status, 200);
+  assert.equal((await admin('POST', `/api/admin/transfers/${list[0].id}/confirm`)).status, 409); // only once
+  assert.deepEqual((await anon('GET', `/api/properties/${p.body.id}/slots?date=${day}`)).body.booked, ['14:00']); // booking confirmed by the payment
+  assert.equal((await c('GET', `/api/payments/${pay.body.reference}/receipt`)).body.includes('Bank transfer'), true);
+  assert.equal((await c('GET', '/api/my/pending-payments')).body.length, 0);
+  const pay2 = await c('POST', `/api/properties/${p.body.id}/title-check`);
+  await c('POST', `/api/payments/transfer/${pay2.body.reference}/claim`, null, await receipt('Someone'));
+  const l2 = (await admin('GET', '/api/admin/transfers')).body.find((x) => x.reference === pay2.body.reference);
+  assert.equal((await admin('POST', `/api/admin/transfers/${l2.id}/reject`, { reason: 'No matching credit' })).status, 200);
+  assert.equal((await c('GET', `/api/payments/transfer/${pay2.body.reference}`)).body.status, 'failed');
+  await admin('PUT', '/api/admin/settings', { bank_account_number: '' }); // back to card/demo for any later checks
+});
