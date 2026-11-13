@@ -1,4 +1,4 @@
-/* DanGida v2 pages: discovery, professionals, trust centre, SPV investment, insights, company. */
+/* Dangaske Real Estate v2 pages: discovery, professionals, trust centre, SPV investment, insights, company. */
 (() => {
   const DG = window.DG;
   const { $, app, S, e, money, price, cap, date, status, opts, api, toast, busy, formData, go, needLogin, modal, closeModal, cards, STATES, render, vbadge } = DG;
@@ -9,6 +9,8 @@
   const meta = async () => META || (META = await api('/meta'));
   const co = () => `<span class="notranslate">${e(S.cfg.company)}</span>`;
   const site = () => `<span class="notranslate">${e(S.cfg.site_name)}</span>`;
+
+  DG.ACTIONS.joinsvc = () => { DG.presetRole = 'service'; DG.openLogin(); };
 
   // ---------- header extras: currency, search palette, WhatsApp button, app install ----------
   let installEvt = null;
@@ -42,35 +44,41 @@
   }
 
   // ---------- home ----------
-  const cityCard = (c) => `<a class="city" href="/listings?city=${encodeURIComponent(c.city)}" data-link><b>${e(c.city)}</b><span>${c.n ? `${c.n} ${c.n === 1 ? 'property' : 'properties'}${c.from_price ? ` · from <span class="notranslate">${price(c.from_price)}</span>` : ''}` : 'Coming soon'}</span></a>`;
+  const cityCard = (c) => `<a class="city" href="/listings?city=${encodeURIComponent(c.city)}" data-link><small>Nigeria</small><b>${e(c.city)}</b><span>${c.n ? `${c.n} ${c.n === 1 ? 'property' : 'properties'}${c.from_price ? ` · from <span class="notranslate">${price(c.from_price)}</span>` : ''}` : 'Coming soon'}</span></a>`;
   route(/^\/$/, async () => {
-    const [feat, recent, mk, spvs] = await Promise.all([api('/properties?featured=1&available=1&limit=4'), api('/properties?limit=8'), api('/markets'), api('/spvs')]);
-    const tabs = [['sale', 'Buy'], ['rent', 'Rent'], ['shortlet', 'Short lets'], ['new', 'New developments']];
+    const [feat, recent, mk, spvs, st] = await Promise.all([api('/properties?featured=1&available=1&limit=4'), api('/properties?limit=8'), api('/markets'), api('/spvs'), api('/stats')]);
+    const tabs = [['sale', 'Buy'], ['rent', 'Rent'], ['new', 'Off-plan'], ['commercial', 'Commercial']];
+    const stat = [[st.verified_listings, 'verified listings'], [st.professionals, 'verified professionals'], [st.cities, 'cities']].filter(([n]) => n > 0);
+    const std = [['🪪', 'Identity verification'], ['✔', 'KYC ready'], ['⚖', 'AML standards'], ['🔒', 'Data privacy'], ['💳', 'Secure payments'], ['🧾', 'Audit trail'], ['🛡', 'Escrow ready'], ['🚫', 'Fraud prevention']];
     app.innerHTML = `<div class="hero"><div class="hero-in">
+      <span class="eyebrow">A property marketplace in Kano, Nigeria</span>
       <h1>Own property the <em>easy</em>, safe way.</h1>
-      <p>Verified houses, land and investment opportunities from ${co()}. Pay in instalments, invest through an SPV, and protect every deal with escrow.</p>
-      <div class="pills" id="stabs">${tabs.map(([k, t], i) => `<button class="pill${i ? '' : ' on'}" data-k="${k}" style="border:0;cursor:pointer${i ? '' : ';background:var(--gold);color:#2b2205'}">${t}</button>`).join('')}</div>
-      <form class="search" id="hs" style="margin-top:12px"><input class="wide" name="q" placeholder="City, area or keyword" aria-label="Search">
+      <p>Verified houses, land and investment opportunities from ${co()}. Pay in instalments, co-invest through an SPV, and protect every deal with escrow.</p>
+      ${stat.length ? `<p class="hstats">${stat.map(([n, t]) => `<b>${n}</b> ${t}`).join(' &nbsp;·&nbsp; ')}</p>` : ''}
+      <div class="stabs" id="stabs">${tabs.map(([k, t], i) => `<button type="button" data-k="${k}" class="${i ? '' : 'on'}">${t}</button>`).join('')}</div>
+      <form class="search" id="hs"><input class="wide" name="q" placeholder="City, neighbourhood, landmark or keyword" aria-label="Search">
         <select name="type" aria-label="Type">${opts(S.cfg.types, '', 'Any type')}</select>
         <select name="beds" aria-label="Bedrooms">${opts([1, 2, 3, 4, 5].map((n) => [n, n + '+ beds']), '', 'Any beds')}</select>
         <input name="max" inputmode="numeric" placeholder="Max price ₦" aria-label="Maximum price">
         <button class="btn gold">Search</button></form>
-      <div class="pills"><a class="pill" href="/listings?easy=1" data-link>Easy-buy properties</a><a class="pill" href="/invest" data-link>Invest from one unit</a><a class="pill" href="/listings?verified=1" data-link>✔ Verified only</a><a class="pill" href="/request" data-link>Can't find it? Request it</a></div>
+      <div class="hlinks"><a href="/listings" data-link>⚙ Advanced filters</a><a href="/map" data-link>🗺 Map search</a><a href="/dashboard?tab=saved" data-link>🔔 Saved searches</a><a href="/listings?easy=1" data-link>Easy-buy</a><a href="/invest" data-link>Invest</a><a class="btn gold sm" href="/request" data-link>＋ Request a property</a><span>Verified listings · Escrow ready · Fraud protection</span></div>
     </div></div>
-    ${feat.items.length ? `<section><div class="spread"><h2>Featured properties</h2><a href="/listings?featured=1" data-link>View all →</a></div>${cards(feat.items, '')}</section>` : ''}
-    <section><div class="spread"><h2>Recently added</h2><a href="/listings" data-link>Browse marketplace →</a></div>${cards(recent.items, 'No properties yet. Check back soon.')}</section>
-    <section><div class="spread"><h2>Featured cities</h2><a href="/markets" data-link>Explore markets →</a></div><div class="grid g4 keep2">${mk.featured.slice(0, 8).map(cityCard).join('')}</div></section>
+    <section class="sec"><span class="kicker">Featured properties</span><div class="spread"><h2>Verified inventory, curated for discovery.</h2><a href="/listings?featured=1" data-link>View all properties →</a></div>${feat.items.length ? cards(feat.items, '') : '<p class="muted">Verified listings appear here as inventory is published to the marketplace.</p>'}</section>
+    <section class="sec"><span class="kicker">Recently added</span><div class="spread"><h2>Newly published listings.</h2><a href="/listings" data-link>Browse marketplace →</a></div>${cards(recent.items, 'No properties yet. Check back soon.')}</section>
+    <section class="sec"><span class="kicker">Featured cities</span><div class="spread"><h2>Cross-city markets, one platform.</h2><a href="/markets" data-link>Explore markets →</a></div><div class="grid g4 keep2">${mk.featured.slice(0, 8).map(cityCard).join('')}</div></section>
     ${spvs.some((s) => s.status === 'open') ? `<section class="band"><div><h2>Invest in property from one unit</h2><p>Co-own income-producing property through a dedicated SPV. Open now: ${e(spvs.find((s) => s.status === 'open').title)}.</p></div><a class="btn gold" href="/invest" data-link>See investment offers</a></section>` : ''}
-    <section><h2>Why ${site()}</h2><div class="grid g4">
-      <div class="card"><h3>✔ Verified by design</h3><p class="muted">Listings and professionals carry a badge only after our checks are complete.</p></div>
-      <div class="card"><h3>🛡 Escrow-ready</h3><p class="muted">Your money is held and released only when you confirm handover.</p></div>
-      <div class="card"><h3>📅 Easy-buy plans</h3><p class="muted">Spread the cost with a deposit and monthly instalments.</p></div>
-      <div class="card"><h3>🧾 Accountable</h3><p class="muted">Offers, payments and admin actions leave an audit trail for dispute support.</p></div></div>
-      <p style="margin-top:14px"><a href="/trust" data-link>Visit the trust centre →</a></p></section>
-    <section class="band"><div><h2>Take ${e(S.cfg.site_name)} with you</h2><p>Install the app on your phone for instant alerts on new listings and sales.</p></div><div class="row"><button class="btn gold" data-act="install">Install the app</button><a class="btn light" href="/request" data-link>Request a property</a></div></section>`;
+    <section class="sec"><span class="kicker">Why ${site()}</span><h2>Trusted infrastructure for property deals.</h2><div class="grid g4">
+      <div class="card"><h3>✔ Verified listings</h3><p class="muted">Title, media and lister checks are completed before the badge appears.</p></div>
+      <div class="card"><h3>🪪 Verified professionals</h3><p class="muted">Agents, agencies and developers pass identity checks.</p></div>
+      <div class="card"><h3>🛡 Secure escrow</h3><p class="muted">Your money is held and released only when you confirm handover.</p></div>
+      <div class="card"><h3>🚫 Fraud protection</h3><p class="muted">Monitoring, reporting and rapid suspension of bad actors.</p></div></div>
+      <p style="margin-top:14px"><a href="/trust" data-link>Trust &amp; safety →</a></p></section>
+    <section class="sec"><h2 class="center">Built to meet high standards</h2><p class="muted center">Security, compliance and transparency are engineered into every transaction — not outsourced to a badge.</p>
+      <div class="grid g4 keep2 std">${std.map(([i, t]) => `<div class="card center"><div class="sicon">${i}</div><b>${t}</b></div>`).join('')}</div></section>
+    <section class="band"><div><h2>Take ${site()} with you</h2><p>Get the Android app for instant alerts on new listings, inspections and sales.</p></div><div class="row"><button class="btn gold" data-act="install">Get the Android app</button><a class="btn light" href="/request" data-link>Request a property</a></div></section>`;
     let mode = 'sale';
-    app.querySelectorAll('#stabs button').forEach((b) => b.addEventListener('click', () => { mode = b.dataset.k; app.querySelectorAll('#stabs button').forEach((x) => { const on = x === b; x.style.background = on ? 'var(--gold)' : ''; x.style.color = on ? '#2b2205' : ''; }); }));
-    $('#hs').addEventListener('submit', (ev) => { ev.preventDefault(); go('/listings?' + DG.cleanQuery({ ...formData(ev.target), ...(mode === 'new' ? { new_dev: 1 } : { purpose: mode }) })); });
+    app.querySelectorAll('#stabs button').forEach((b) => b.addEventListener('click', () => { mode = b.dataset.k; app.querySelectorAll('#stabs button').forEach((x) => x.classList.toggle('on', x === b)); }));
+    $('#hs').addEventListener('submit', (ev) => { ev.preventDefault(); go('/listings?' + DG.cleanQuery({ ...formData(ev.target), ...(mode === 'new' ? { new_dev: 1 } : mode === 'commercial' ? { type: 'commercial' } : { purpose: mode }) })); });
   });
 
   // ---------- markets, projects ----------
@@ -101,14 +109,54 @@
     app.innerHTML = `<div class="card" style="margin-top:28px"><div class="row"><div class="avatar notranslate">${e(p.name[0].toUpperCase())}</div><div><h1 style="margin:0;font-size:1.7rem">${e(p.name)} ${p.verified ? vbadge : ''}</h1>
       <span class="muted">${e(TYPE[p.type] || 'Agent')}${p.person ? ' · ' + e(p.person) : ''}${p.city ? ' · ' + e(p.city) : ''} · Member since ${date(p.since)}</span></div></div>
       ${p.bio ? `<p class="prose">${e(p.bio)}</p>` : ''}<p class="small muted">Contact details are shared on each listing once unlocked. ${p.verified ? '' : 'This profile has not completed verification.'}</p></div>
-      <section><h2>Listings</h2>${cards(p.properties, 'No live listings.')}</section>`;
+      <section><h2>Listings</h2>${cards(p.properties, 'No live listings.')}</section><section id="rev"></section>`;
+    if (DG.agentExtras) DG.agentExtras(p);
   });
-  route(/^\/services$/, async () => {
-    const [rows, mt] = await Promise.all([api('/agents?type=service'), meta()]);
-    app.innerHTML = `${h1('Services', 'Independent specialists for the work around a property transaction.')}
-      <div class="chips" style="margin-bottom:18px">${mt.services.map((s) => `<span class="chip">${e(cap(s))}</span>`).join('')}</div>
-      <div class="grid g3">${rows.map(proCard).join('') || '<p class="muted">No service providers are listed yet.</p>'}</div>
-      <p class="small muted" style="margin-top:18px">Offer one of these services? Sign up as an agent, then set your account type to “Service provider” in your dashboard.</p>`;
+  route(/^\/services$/, async (_m, q) => {
+    const cat = q.get('category') || '';
+    const [rows, mt] = await Promise.all([api('/agents?type=service' + (cat ? '&category=' + encodeURIComponent(cat) : '')), meta()]);
+    const card = (p) => `<div class="card pro"><div class="row"><div class="avatar notranslate">${e((p.name || '?')[0].toUpperCase())}</div><div><b>${e(p.name)}</b> ${p.verified ? vbadge : ''}<br><span class="small muted">${e(cap(p.service_category))}${p.city ? ' · ' + e(p.city) : ''}</span></div></div>
+      <p class="small muted">${e(p.bio ? p.bio.slice(0, 140) : 'Verified service provider.')}</p>
+      <div class="row">${p.phone ? `<a class="btn sm" href="https://wa.me/${e(String(p.phone).replace(/\D/g, ''))}?text=${encodeURIComponent('Hello, I found you on ' + S.cfg.site_name)}" target="_blank" rel="noopener">WhatsApp</a><a class="btn sm ghost notranslate" href="tel:+${e(String(p.phone).replace(/\D/g, ''))}">Call</a>` : ''}<a class="btn sm ghost" href="/agents/${p.id}" data-link>Profile</a></div></div>`;
+    app.innerHTML = `${h1('Services', 'Verified specialists for the work around a property transaction. Contact them directly.')}
+      <div class="chips" style="margin:14px 0 20px">${[['', 'All'], ...mt.services.map((x) => [x, cap(x)])].map(([k, t]) => `<a class="chip${k === cat ? ' ok' : ''}" href="/services${k ? '?category=' + encodeURIComponent(k) : ''}" data-link>${e(t)}</a>`).join('')}</div>
+      <div class="grid g3">${rows.map(card).join('') || `<p class="muted">No verified ${cat ? e(cap(cat)) + ' ' : ''}providers are listed yet.</p>`}</div>
+      <section class="band" style="margin-top:30px"><div><h2>Offer a service</h2><p>Lawyers, surveyors, valuers, designers and builders: join as a service provider, complete identity verification, and clients can contact you directly.</p></div><button class="btn gold" data-act="joinsvc">Join as a service provider</button></section>`;
+  });
+
+  // ---------- KYC (identity verification) ----------
+  const SOURCES = ['Salary', 'Business income', 'Savings', 'Sale of property', 'Gift or inheritance', 'Diaspora remittance', 'Other'];
+  const KYC_DOCS = { id_front: 'ID — front', id_back: 'ID — back', photo: 'Photograph', address_proof: 'Proof of address', cac: 'CAC certificate' };
+  async function renderKyc(box, o = {}) {
+    if (!box) return;
+    const u = S.user, mt = await meta(), kd = u.kyc_data || {};
+    const biz = ['agency', 'developer'].includes(u.account_type), svc = u.account_type === 'service';
+    const max18 = new Date(Date.now() - 18 * 365.25 * 86400e3).toISOString().slice(0, 10);
+    const head = { pending: '<p><span class="status pending">Under review</span> We are checking your documents and will notify you. You will be able to post and invest as soon as you are approved.</p>',
+      approved: `<p>${vbadge} Your identity is verified.</p>`, rejected: `<p><span class="status rejected">Not approved</span> ${e(u.kyc_note)} Please correct the details and submit again.</p>` }[u.kyc_status] || '';
+    const inp = (n, l, extra = '') => `<div><label>${l}</label><input name="${n}" value="${e(kd[n] || '')}" ${extra}></div>`;
+    const file = (n, l, req) => `<div><label>${l}${req ? '' : ' <span class="small muted">(optional)</span>'}</label><input type="file" name="${n}" accept="image/jpeg,image/png,image/webp,application/pdf"${req ? ' required' : ''}></div>`;
+    box.innerHTML = `<div class="card" style="max-width:820px"><h3>Identity verification (KYC)</h3>
+      ${!['approved', 'pending'].includes(u.kyc_status) ? `<p class="muted">${['agent', 'agency', 'developer', 'service'].includes(u.account_type) ? 'Required before you can post or manage anything on the platform. Until then you can browse like any buyer.' : 'Required to invest through an SPV and to earn the verified badge.'} Documents are stored privately and seen only by our compliance staff.</p>` : ''}${head}
+      ${['approved', 'pending'].includes(u.kyc_status) ? '' : `<form id="kycf" class="grid">
+        <div class="grid g2">${inp('full_name', 'Full legal name (as on your ID)', 'required maxlength="120"')}<div><label>Date of birth</label><input type="date" name="dob" required max="${max18}" value="${e(kd.dob || '')}"></div></div>
+        <div class="grid g3"><div><label>Gender <span class="small muted">(optional)</span></label><select name="gender">${opts(['Male', 'Female'], kd.gender, '—')}</select></div>${inp('nationality', 'Nationality', 'required')}${inp('occupation', 'Occupation', 'required maxlength="100"')}</div>
+        <div><label>Residential address</label><input name="address" required maxlength="250" value="${e(kd.address || '')}"></div>
+        <div><label>Source of funds</label><select name="source_of_funds" required>${opts(SOURCES, kd.source_of_funds, 'Select')}</select></div>
+        <div class="grid g3"><div><label>ID type</label><select name="id_type" required>${opts(mt.doc_types.filter((d) => d !== 'CAC certificate'), kd.id_type, 'Select')}</select></div>${inp('id_number', 'ID number', 'required maxlength="40"')}<div><label>BVN <span class="small muted">(optional, 11 digits)</span></label><input name="bvn" inputmode="numeric" maxlength="11" value="${e(kd.bvn || '')}"></div></div>
+        ${biz ? `<div class="grid g2">${inp('business_name', 'Registered business name', 'required maxlength="150"')}${inp('rc_number', 'CAC registration (RC) number', 'required maxlength="30"')}</div>` : ''}
+        ${svc ? `<div><label>Service you offer</label><select name="service_category" required>${opts(mt.services, u.service_category, 'Select')}</select></div>` : ''}
+        <h4 style="margin:6px 0 0">Documents <span class="small muted">(JPG, PNG, WebP or PDF, up to 10 MB each)</span></h4>
+        <div class="grid g2">${file('id_front', 'Government ID — front', true)}${file('id_back', 'Government ID — back', false)}${file('photo', 'Passport-style photograph', true)}${file('address_proof', 'Proof of address (utility bill, bank statement or tenancy agreement)', true)}${biz ? file('cac', 'CAC certificate', true) : ''}</div>
+        <label class="check"><input type="checkbox" name="consent" required> I declare that the information and documents are true and I agree to their verification (see the <a href="/legal/privacy" data-link>Privacy policy</a>).</label>
+        <div><button class="btn gold">Submit for verification</button></div></form>`}</div>`;
+    const f = $('#kycf', box);
+    if (f) f.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', f), async () => { S.user = (await api('/me/kyc', { method: 'POST', form: new FormData(f) })).user; toast('Submitted. We will review your documents.'); (o.after || (() => renderKyc(box, o)))(); }); });
+  }
+  route(/^\/kyc$/, async () => {
+    if (needLogin()) return (app.innerHTML = '<p class="pad center muted">Sign in to continue.</p>');
+    app.innerHTML = `${h1('Identity verification', 'Complete your KYC to unlock posting and investing.')}<div id="kycbox"></div>${['agent', 'admin'].includes(S.user.role) ? '<p style="margin-top:16px"><a class="btn ghost" href="/dashboard" data-link>Go to dashboard</a></p>' : ''}`;
+    await renderKyc($('#kycbox'), { after: () => render() });
   });
 
   // ---------- SPV investment ----------
@@ -118,11 +166,48 @@
     <div class="pbody"><div class="ptitle">${e(s.title)}</div><div class="ploc">${e(s.location)}</div>
       <div class="bar" style="margin:8px 0 2px"><i style="width:${pct(s)}%"></i></div><div class="small muted notranslate">${money(s.raised)} of ${money(s.target)} · ${pct(s)}%</div>
       <div class="specs"><span>Unit <b class="notranslate">${money(s.unit_price)}</b></span><span>Projected ${s.projected_return_pct}%/yr</span><span>${s.tenor_months} months</span></div></div></a>`;
-  route(/^\/invest$/, async () => {
+  route(/^\/invest$/, async (_m, q) => {
     const rows = await api('/spvs');
-    app.innerHTML = `${h1('Invest in property through an SPV', `Each offer is held by its own special purpose vehicle (SPV). You buy units, co-own the asset with other investors and share in its income or sale proceeds in proportion to your units.`)}
-      <div class="grid g4 steps" style="margin:18px 0"><div class="card"><h3>Verify your identity</h3><p class="muted">Investing requires a completed identity (KYC) check.</p></div><div class="card"><h3>Choose an offer</h3><p class="muted">Review the property, strategy, term and documents.</p></div><div class="card"><h3>Buy units</h3><p class="muted">Pay securely. Units appear in your portfolio at once.</p></div><div class="card"><h3>Track payouts</h3><p class="muted">Distributions are recorded per unit and shown in your dashboard.</p></div></div>
-      ${RISK}<section>${rows.length ? `<div class="cards">${rows.map(spvCard).join('')}</div>` : '<p class="muted pad center">No investment offers are open right now. Turn on notifications to hear about the next one.</p>'}</section>`;
+    const u = S.user, verified = Boolean(u && u.verified), submitted = Boolean(u && ['pending', 'approved'].includes(u.kyc_status));
+    const step = Math.min(4, Math.max(1, Number(q.get('step')) || (verified ? 2 : 1)));
+    let sel = 0; try { sel = Number(sessionStorage.getItem('spv')) || 0; } catch { /* ignore */ }
+    const chosen = rows.find((x) => x.id === sel && x.status === 'open') || null;
+    const steps = [['Verify your identity', 'Complete your KYC', submitted], ['Choose an offer', 'Pick an SPV', Boolean(chosen)], ['Buy units', 'Pay securely', false], ['Track payouts', 'Your portfolio', false]];
+    const nav = (back, next, ok = true) => `<div class="row" style="margin-top:18px;justify-content:space-between">${back ? `<a class="btn ghost" href="${back}" data-link>← Back</a>` : '<span></span>'}${next ? `<a class="btn gold${ok ? '' : ' disabled'}" href="${next}" data-link>Next →</a>` : ''}</div>`;
+    const login = '<div class="card center"><p>Sign in or join to continue.</p><button class="btn gold" data-act="login">Sign in or join</button></div>';
+    app.innerHTML = `${h1('Invest in property through an SPV', 'Each offer is held by its own special purpose vehicle (SPV). You buy units, co-own the asset with other investors and share in its income or sale proceeds in proportion to your units.')}
+      <div class="grid g4 steps" style="margin:18px 0">${steps.map(([t, d, done], i) => `<a class="card stepc${step === i + 1 ? ' on' : ''}${done ? ' done' : ''}" href="/invest?step=${i + 1}" data-link><h3>${t}</h3><p class="muted">${d}</p></a>`).join('')}</div>
+      ${RISK}<section id="stepbody" style="margin-top:20px"></section>`;
+    const body = $('#stepbody');
+    if (step === 1) {
+      if (!u) body.innerHTML = login;
+      else { body.innerHTML = '<div id="kycbox"></div>' + nav(null, '/invest?step=2', submitted); await renderKyc($('#kycbox'), { after: () => render() }); }
+    } else if (step === 2) {
+      body.innerHTML = `<h2>Choose an offer</h2>${rows.filter((x) => x.status === 'open').length ? `<div class="cards">${rows.filter((x) => x.status === 'open').map((x) => `<div class="pcard${chosen && chosen.id === x.id ? ' sel' : ''}"><div class="pimg">${x.cover_thumb ? `<img src="${e(x.cover_thumb)}" alt="" loading="lazy">` : ''}<div class="tags"><span class="tag">${e(cap(x.strategy))}</span></div></div>
+        <div class="pbody"><div class="ptitle">${e(x.title)}</div><div class="ploc">${e(x.location)}</div><div class="bar" style="margin:8px 0 2px"><i style="width:${pct(x)}%"></i></div><div class="small muted notranslate">${money(x.raised)} of ${money(x.target)}</div>
+        <div class="specs"><span>Unit <b class="notranslate">${money(x.unit_price)}</b></span><span>${x.projected_return_pct}%/yr</span><span>${x.tenor_months} months</span></div>
+        <div class="row" style="margin-top:8px"><button class="btn sm${chosen && chosen.id === x.id ? '' : ' gold'}" data-pick="${x.id}">${chosen && chosen.id === x.id ? '✓ Selected' : 'Select this offer'}</button><a class="small" href="/invest/${x.id}" data-link>Details</a></div></div></div>`).join('')}</div>` : '<p class="muted pad center">No investment offers are open right now. Turn on notifications to hear about the next one.</p>'}
+        ${nav('/invest?step=1', '/invest?step=3', Boolean(chosen))}`;
+      body.querySelectorAll('[data-pick]').forEach((bt) => bt.addEventListener('click', () => { try { sessionStorage.setItem('spv', bt.dataset.pick); } catch { /* ignore */ } render(); }));
+    } else if (step === 3) {
+      if (!u) body.innerHTML = login;
+      else if (!chosen) body.innerHTML = `<div class="card center"><p>Choose an offer first.</p><a class="btn gold" href="/invest?step=2" data-link>Choose an offer</a></div>${nav('/invest?step=2', '/invest?step=4')}`;
+      else {
+        const left = chosen.total_units - chosen.sold_units;
+        body.innerHTML = `<h2>Buy units in ${e(chosen.title)}</h2><div class="card" style="max-width:520px">
+          <p class="small muted notranslate">Unit price ${money(chosen.unit_price)} · minimum ${chosen.min_units} unit(s) · ${left.toLocaleString()} left</p>
+          ${verified ? '' : `<p class="demo">${u.kyc_status === 'pending' ? 'Your identity check is under review. You can buy as soon as it is approved.' : 'Complete your identity check first.'} <a href="/invest?step=1" data-link>Go to step 1</a></p>`}
+          <form id="inv" class="grid"><div><label>Units to buy</label><input name="units" type="number" min="${chosen.min_units}" max="${left}" value="${Math.min(chosen.min_units, left)}" required></div>
+            <p class="small">Total: <b class="notranslate" id="tot">${money(Math.min(chosen.min_units, left) * chosen.unit_price)}</b></p>
+            <label class="check small"><input type="checkbox" name="accept_risk" required> I have read the risk notice and the offer details.</label>
+            <button class="btn gold block"${verified ? '' : ' disabled'}>Pay &amp; invest</button></form></div>${nav('/invest?step=2', '/invest?step=4')}`;
+        const f = $('#inv');
+        f.units.addEventListener('input', () => ($('#tot').textContent = money((Number(f.units.value) || 0) * chosen.unit_price)));
+        f.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', f), () => DG.pay2(`/spvs/${chosen.id}/invest`, { units: Number(f.units.value), accept_risk: true })); });
+      }
+    } else {
+      body.innerHTML = u ? `<h2>Your portfolio and payouts</h2>${await DG.dashTabs.invest()}${nav('/invest?step=3', null)}` : login;
+    }
   });
   route(/^\/invest\/(\d+)$/, async (m) => {
     const s = await api('/spvs/' + m[1]);
@@ -134,7 +219,7 @@
       ${s.summary ? `<p><b>${e(s.summary)}</b></p>` : ''}<p class="prose">${e(s.description)}</p>
       ${s.property_id ? `<p><a href="/p/${s.property_id}" data-link>View the underlying property →</a></p>` : ''}
       ${s.distributions.length ? `<h3>Payout history</h3><div class="tablewrap"><table><tr><th>Date</th><th>Per unit</th><th>Note</th></tr>${s.distributions.map((d) => `<tr><td>${date(d.created_at)}</td><td class="notranslate">${money(d.amount_per_unit)}</td><td>${e(d.note)}</td></tr>`).join('')}</table></div>` : ''}
-      <div style="margin-top:18px">${RISK}</div></div>
+      <div id="mkt"></div><div style="margin-top:18px">${RISK}</div></div>
     <aside class="side"><div class="card"><h3>${e(cap(s.status))}</h3><div class="bar"><i style="width:${pct(s)}%"></i></div>
       <p class="small notranslate"><b>${money(s.raised)}</b> raised of ${money(s.target)}<br>${left.toLocaleString()} of ${s.total_units.toLocaleString()} units left</p>
       ${s.my_units ? `<p class="chip ok">You hold ${s.my_units} unit${s.my_units > 1 ? 's' : ''}</p>` : ''}
@@ -142,6 +227,7 @@
         <p class="small">Total: <b class="notranslate" id="tot">${money(Math.min(s.min_units, left) * s.unit_price)}</b></p>
         <label class="check small"><input type="checkbox" name="accept_risk" required> I have read the risk notice and offer details.</label>
         <button class="btn gold block">Invest now</button></form>` : '<p class="muted">This offer is not open for new investment.</p>'}</div></aside></div>`;
+    if (DG.spvExtras) DG.spvExtras(s);
     const f = $('#inv'); if (!f) return;
     f.units.addEventListener('input', () => ($('#tot').textContent = money((Number(f.units.value) || 0) * s.unit_price)));
     f.addEventListener('submit', (ev) => {
@@ -209,6 +295,7 @@
     app.innerHTML = `${h1('Contact us', `Questions about a property, an investment offer, a partnership or your account — we are glad to help.`)}
       <div class="grid g2"><div>${reportForm('contact')}</div><div class="card"><h3 class="notranslate">${e(S.cfg.company)}</h3>
         ${S.cfg.office_address ? `<p>${e(S.cfg.office_address)}</p>` : ''}${S.cfg.contact_email ? `<p class="notranslate"><a href="mailto:${e(S.cfg.contact_email)}">${e(S.cfg.contact_email)}</a></p>` : ''}
+        ${S.cfg.phones ? `<p class="notranslate">${e(S.cfg.phones)}</p>` : ''}${S.cfg.rc_number ? `<p class="small muted notranslate">RC ${e(S.cfg.rc_number)}</p>` : ''}
         ${wa ? `<p><a class="btn sm" href="https://wa.me/${e(wa.replace(/^0/, '234'))}" target="_blank" rel="noopener">Chat on WhatsApp</a></p>` : ''}<p class="small muted">To report fraud or a security issue, use the <a href="/trust" data-link>trust centre</a>.</p></div></div>`;
     bindReport();
   });
@@ -216,7 +303,7 @@
   // ---------- company pages ----------
   const doc = (title, html) => { app.innerHTML = `<article class="doc">${h1(title)}${html}</article>`; };
   route(/^\/about$/, async () => doc(`About ${e(S.cfg.site_name)}`, `
-    <p>${site()} is the online property marketplace of ${co()}. We connect buyers, tenants, investors and accredited property professionals, and we put the safeguards of a careful transaction — verification, escrow and a clear paper trail — into the product itself.</p>
+    <p>${site()} is the online property marketplace of Kano-based ${co()}. We connect buyers, tenants, investors and accredited property professionals, and we put the safeguards of a careful transaction — verification, escrow and a clear paper trail — into the product itself.</p>
     <h2>Mission</h2><p>Make owning property simple, affordable and safe.</p>
     <h2>Vision</h2><p>A market where every listing can be trusted and every payment is protected.</p>
     <h2>What we offer</h2><ul><li><b>Marketplace</b> — homes, land, commercial property and new developments, with verified badges.</li><li><b>Easy-buy plans</b> — a deposit and monthly instalments.</li><li><b>Escrow</b> — funds released only when the buyer confirms handover.</li><li><b>SPV investment</b> — co-own property by buying units in a dedicated vehicle.</li><li><b>Property requests</b> — tell us what you need and let agents come to you.</li><li><b>Professionals directory</b> — agents, agencies, developers and service providers.</li></ul>
@@ -234,7 +321,7 @@
     <p class="muted small">Address, contact details and full galleries are not part of the public API. For write access or a data partnership, <a href="/contact" data-link>contact us</a>.</p>`));
   const reviewNote = '';
   route(/^\/legal\/terms$/, async () => doc('Terms of use', `${reviewNote}
-    <p>These terms govern your use of ${site()}, operated by ${co()} (“we”). By creating an account you agree to them.</p>
+    <p>These terms govern your use of ${site()}, (“we”). By creating an account you agree to them.</p>
     <h2>1. Accounts</h2><p>You sign in with your phone number and a one-time code. You are responsible for activity on your account and must give accurate information, including during identity checks.</p>
     <h2>2. Listings</h2><p>Listers must have the right to market a property and must describe it truthfully. We may edit, decline, unpublish or remove listings, and suspend accounts that break these terms.</p>
     <h2>3. Fees</h2><p>Fees for viewing full details, escrow and other services are shown before you pay. Fees for viewing full details are non-refundable once the details have been shown.</p>
@@ -244,32 +331,55 @@
     <h2>7. Liability</h2><p>Verification reduces risk but is not a warranty of title or value. To the extent the law allows, we are not liable for losses arising from dealings conducted outside the platform.</p>
     <h2>8. Governing law</h2><p>These terms are governed by the laws of the Federal Republic of Nigeria.</p>`));
   route(/^\/legal\/privacy$/, async () => doc('Privacy policy', `
-    <p>This policy explains how ${co()} handles personal data on ${site()}, in line with the Nigeria Data Protection Act.</p>
+    <p>This policy explains how ${site()} handles personal data on ${site()}, in line with the Nigeria Data Protection Act.</p>
     <h2>What we collect</h2><ul><li>Your phone number, name and profile details.</li><li>Identity documents you submit for verification.</li><li>Listings, requests, messages and reports you create.</li><li>Payment references and amounts (card details are handled by our payment partner, not stored by us).</li><li>Device push-notification tokens, if you turn notifications on.</li></ul>
     <h2>How we use it</h2><p>To run your account, verify identities, process payments and escrow, prevent fraud, send alerts you asked for and meet legal obligations.</p>
     <h2>Sharing</h2><p>With payment and messaging providers that process data for us, with the other party to a transaction where needed, and with authorities where the law requires. We do not sell personal data.</p>
     <h2>Translation</h2><p>If you switch language, page text is sent to Google Translate to be translated.</p>
     <h2>Retention and your rights</h2><p>We keep records for as long as your account is open and as the law requires for financial records. You may ask to access, correct or delete your data through the <a href="/contact" data-link>contact page</a>.</p>`));
 
+  // ---------- bank transfer checkout ----------
+  DG.ACTIONS.copytxt = async (b) => { try { await navigator.clipboard.writeText(b.dataset.v); toast('Copied.'); } catch { prompt('Copy this', b.dataset.v); } };
+  route(/^\/pay\/transfer$/, async (_m, q) => {
+    if (needLogin()) return (app.innerHTML = '<p class="pad center muted">Sign in to continue.</p>');
+    const ref = q.get('reference');
+    const draw = async () => {
+      const p = await api('/payments/transfer/' + encodeURIComponent(ref));
+      const copy = (v) => `<button class="btn sm ghost" data-act="copytxt" data-v="${e(v)}">Copy</button>`;
+      app.innerHTML = p.status === 'paid'
+        ? `<div class="card center" style="max-width:520px;margin:40px auto"><h2>✔ Payment confirmed</h2><p class="muted">We received <b class="notranslate">${money(p.amount)}</b> for ${e(p.label)}${p.item ? ` — ${e(p.item)}` : ''}.</p><a class="btn gold" href="/dashboard" data-link>Continue</a></div>`
+        : p.status === 'failed' ? '<div class="card center" style="max-width:520px;margin:40px auto"><h2>Transfer not matched</h2><p class="muted">We could not match this transfer. Please contact us.</p><a class="btn" href="/contact" data-link>Contact us</a></div>'
+        : `<div class="card" id="tpage" style="max-width:560px;margin:30px auto"><h2>Pay by bank transfer</h2>
+          <p class="muted">${e(p.label)}${p.item ? ` — ${e(p.item)}` : ''}</p>
+          <p class="price notranslate" style="font-size:2rem;margin:6px 0">${money(p.amount)}</p>
+          ${p.bank ? `<table><tr><td class="muted">Bank</td><td><b>${e(p.bank.bank)}</b></td><td></td></tr><tr><td class="muted">Account number</td><td><b class="notranslate" style="font-size:1.2rem">${e(p.bank.number)}</b></td><td>${copy(p.bank.number)}</td></tr><tr><td class="muted">Account name</td><td><b>${e(p.bank.name)}</b></td><td></td></tr><tr><td class="muted">Narration / reference</td><td><b class="notranslate">${e(p.reference)}</b></td><td>${copy(p.reference)}</td></tr></table>` : '<p class="demo">Bank details are not set up yet. Please contact us.</p>'}
+          <ol class="small"><li>Transfer exactly <b class="notranslate">${money(p.amount)}</b> to the account above.</li><li>Put <b class="notranslate">${e(p.reference)}</b> in the narration so we can match it.</li><li>Upload your bank receipt and tap “I have paid”. We confirm it as soon as the money arrives, then your booking or purchase is completed.</li></ol>
+          ${p.claimed_at ? `<div class="demo">✔ Thank you${p.sender ? ', ' + e(p.sender) : ''}. We are checking for your payment and will notify you. You can leave this page.</div>`
+            : '<form id="clm" class="grid"><div><label>Upload your transfer receipt <span class="small muted">(screenshot or PDF from your bank app)</span></label><input type="file" name="receipt" accept="image/jpeg,image/png,image/webp,application/pdf" required></div><div><label>Name on the account you paid from <span class="small muted">(helps us find it)</span></label><input name="sender" maxlength="100"></div><button class="btn gold block">I have paid</button></form>'}
+          <p class="small muted" style="margin-top:10px">Reference <span class="notranslate">${e(p.reference)}</span>. Pending transfers are also listed under Dashboard → Receipts.</p></div>`;
+      const f = $('#clm');
+      if (f) f.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', f), async () => { await api(`/payments/transfer/${encodeURIComponent(ref)}/claim`, { method: 'POST', form: new FormData(f) }); toast('Thanks. We will confirm your payment shortly.'); draw(); }); });
+      if (p.status === 'pending' && p.claimed_at) setTimeout(() => { if ($('#tpage')) draw().catch(() => {}); }, 15000);
+    };
+    await draw();
+  });
+
   // ---------- dashboard tabs ----------
   DG.dashTabs.overview = async () => {
     const u = S.user, pro = ['agent', 'admin'].includes(u.role), mt = await meta();
-    return `<form id="pf2" class="card grid"><div class="spread"><h3 style="margin:0">Your profile</h3><span>${u.verified ? vbadge : `<a href="/dashboard?tab=verify" data-link>Get verified →</a>`}</span></div>
+    const gate = u.role === 'agent' && !u.verified ? `<div class="demo" style="margin-bottom:14px"><b>${u.kyc_status === 'pending' ? 'Verification under review.' : 'Verification required.'}</b> ${u.kyc_status === 'pending' ? 'You can post once you are approved. Until then you can browse like a buyer.' : 'Complete your identity verification (KYC) to post and manage listings. Until then you can browse like a buyer.'} <a class="btn sm gold" href="/dashboard?tab=verify" data-link>${u.kyc_status === 'pending' ? 'View' : 'Complete KYC'}</a></div>` : '';
+    return `${gate}<form id="pf2" class="card grid"><div class="spread"><h3 style="margin:0">Your profile</h3><span>${u.verified ? vbadge : `<a href="/dashboard?tab=verify" data-link>Get verified →</a>`}</span></div>
       <div class="grid g3"><div><label>Your name</label><input name="name" value="${e(u.name)}" maxlength="80"></div><div><label>City</label><input name="city" value="${e(u.city)}" maxlength="60"></div>
         ${pro ? `<div><label>Account type</label><select name="account_type">${opts(mt.account_types.map((t) => [t, TYPE[t]]), u.account_type)}</select></div>` : ''}</div>
       ${pro ? `<div class="grid g2"><div><label>Company / trading name</label><input name="company" value="${e(u.company)}" maxlength="100"></div><div><label>Service <span class="small muted">(service providers)</span></label><select name="service_category">${opts(mt.services, u.service_category, '—')}</select></div></div>
         <div><label>About <span class="small muted">(shown on your public profile)</span></label><textarea name="bio" maxlength="600">${e(u.bio)}</textarea></div>` : ''}
       <div class="row"><button class="btn sm">Save profile</button>${pro ? `<a class="small" href="/agents/${u.id}" data-link>View public profile</a>` : ''}<span class="small muted notranslate">+${e(u.phone)} · ${e(cap(u.role))}</span></div></form>
+      <div class="card" style="margin-top:16px"><h3>Email <span class="small muted">(optional)</span> ${u.email_verified ? vbadge : ''}</h3><p class="small muted">Sign-in codes always go to your WhatsApp. Add an email to also get codes, receipts and alerts there.</p>
+        <form id="emf" class="row"><input name="email" type="email" value="${e(u.email)}" placeholder="you@example.com" style="flex:1;min-width:200px" maxlength="200"><button class="btn sm">${u.email ? 'Change' : 'Add email'}</button></form>
+        ${u.email && !u.email_verified ? `<form id="emv" class="row" style="margin-top:10px"><input name="code" inputmode="numeric" maxlength="6" placeholder="6-digit code from your email" style="flex:1;min-width:200px" required><button class="btn sm gold">Confirm email</button></form>` : ''}</div>
       <div class="grid g3" style="margin-top:16px"><a class="card" href="/listings" data-link><h3>Browse properties</h3><span class="muted small">Find your next home or plot</span></a><a class="card" href="/invest" data-link><h3>Invest</h3><span class="muted small">Buy units in SPV-held property</span></a><a class="card" href="/request" data-link><h3>Request a property</h3><span class="muted small">Tell us your specification</span></a></div>`;
   };
-  DG.dashTabs.verify = async () => {
-    const u = S.user, mt = await meta();
-    const head = { none: '<p class="muted">Verify your identity to earn the verified badge and to invest in SPV offers.</p>', pending: '<p><span class="status pending">Under review</span> We are checking your document. You will be notified.</p>', approved: `<p>${vbadge} Your identity is verified.</p>`, rejected: `<p><span class="status rejected">Not approved</span> ${e(u.kyc_note)} Please submit again.</p>` }[u.kyc_status] || '';
-    return `<div class="card" style="max-width:640px"><h3>Identity verification (KYC)</h3>${head}
-      ${u.kyc_status === 'approved' ? '' : `<form id="kyc" class="grid"><div><label>Document type</label><select name="doc_type" required>${opts(mt.doc_types.map((d) => [d, d]), '', 'Select')}</select></div>
-        <div><label>Photo or PDF of the document</label><input type="file" name="document" accept="image/jpeg,image/png,image/webp,application/pdf" required></div>
-        <p class="small muted">Stored privately and seen only by our compliance staff. Max 10 MB.</p><div><button class="btn">Submit for review</button></div></form>`}</div>`;
-  };
+  DG.dashTabs.verify = async () => '<div id="kycbox"></div>';
   DG.dashTabs.invest = async () => {
     const rows = await api('/my/investments');
     if (!rows.length) return '<p class="muted">You have no investments yet. <a href="/invest" data-link>See open offers →</a></p>';
@@ -279,7 +389,9 @@
   };
   DG.dashBind = (tab) => {
     const pf = $('#pf2'); if (pf) pf.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', pf), async () => { S.user = (await api('/me', { method: 'PATCH', body: formData(pf) })).user; toast('Profile saved.'); }); });
-    const k = $('#kyc'); if (k) k.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', k), async () => { S.user = (await api('/me/kyc', { method: 'POST', form: new FormData(k) })).user; toast('Submitted for review.'); render(); }); });
+    const ef = $('#emf'); if (ef) ef.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', ef), async () => { const r = await api('/me/email', { method: 'POST', body: formData(ef) }); S.user = r.user; toast(r.user.email ? `Code sent to ${r.user.email}.${r.demo_code ? ' Demo code: ' + r.demo_code : ''}` : 'Email removed.'); render(); }); });
+    const ev2 = $('#emv'); if (ev2) ev2.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', ev2), async () => { S.user = (await api('/me/email/verify', { method: 'POST', body: formData(ev2) })).user; toast('Email confirmed.'); render(); }); });
+    if (tab === 'verify') renderKyc($('#kycbox'), { after: () => render() });
     void tab;
   };
 
@@ -291,10 +403,22 @@
     <td>${u.id === S.user.id ? '' : `<button class="btn sm ${u.suspended ? '' : 'danger'}" data-sus="${u.id}" data-v="${u.suspended ? 0 : 1}">${u.suspended ? 'Reinstate' : 'Suspend'}</button>`}</td></tr>`).join('')}</table></div>`;
   DG.adminTabs.verify = async (d) => {
     const q = d.users.filter((u) => u.kyc_status === 'pending');
-    return `<h3>Identity checks awaiting review (${q.length})</h3>${q.length ? `<div class="tablewrap"><table><tr><th>Member</th><th>Document</th><th></th></tr>${q.map((u) => `<tr><td>${e(u.company || u.name || '—')}<br><span class="small muted notranslate">+${e(u.phone)} · ${e(TYPE[u.account_type] || '')}</span></td>
-      <td>${e(u.kyc_doc_type)}<br><a href="/api/admin/kyc/${u.id}/file" target="_blank" rel="noopener">Open document ↗</a></td>
-      <td><div class="row"><button class="btn sm" data-kyc="${u.id}" data-ok="1">Approve</button><button class="btn sm ghost" data-kyc="${u.id}" data-ok="0">Reject</button></div></td></tr>`).join('')}</table></div>` : '<p class="muted">Nothing waiting.</p>'}
-      <p class="small muted">Approving adds the verified badge. Listings are verified separately from the Listings tab.</p>`;
+    const parse = (x) => { try { return JSON.parse(x || '{}'); } catch { return {}; } };
+    const L = { full_name: 'Name', dob: 'Date of birth', gender: 'Gender', nationality: 'Nationality', occupation: 'Occupation', address: 'Address', source_of_funds: 'Source of funds', id_type: 'ID type', id_number: 'ID number', bvn: 'BVN', business_name: 'Business', rc_number: 'RC number' };
+    return `<h3>Identity checks awaiting review (${q.length})</h3>${q.map((u) => { const k = parse(u.kyc_data), f = parse(u.kyc_files); return `<div class="card" style="margin-bottom:12px"><div class="spread"><b>${e(u.company || u.name || '—')} <span class="small muted notranslate">+${e(u.phone)} · ${e(TYPE[u.account_type] || '')}</span></b>
+      <span class="row"><button class="btn sm" data-kyc="${u.id}" data-ok="1">Approve</button><button class="btn sm ghost" data-kyc="${u.id}" data-ok="0">Reject</button></span></div>
+      <table style="margin-top:8px">${Object.keys(L).filter((x) => k[x]).map((x) => `<tr><td class="small muted" style="width:170px">${L[x]}</td><td class="notranslate">${e(k[x])}</td></tr>`).join('')}</table>
+      <p class="row" style="margin-top:8px">${Object.keys(f).map((x) => `<a class="btn sm ghost" href="/api/admin/kyc/${u.id}/file?doc=${x}" target="_blank" rel="noopener">${KYC_DOCS[x] || x} ↗</a>`).join('')}</p></div>`; }).join('') || '<p class="muted">Nothing waiting.</p>'}
+      <p class="small muted">Approving adds the verified badge and lets agents, agencies, developers and service providers post. Listings are verified separately from the Listings tab.</p>`;
+  };
+  DG.adminTabs.transfers = async () => {
+    const rows = await api('/admin/transfers');
+    const pending = rows.filter((x) => x.status === 'pending');
+    return `<div class="demo">Confirm a payment <b>only after you see the money</b> in the company bank account with the matching amount and reference. Confirming completes the member's booking, purchase, plan payment or request automatically.</div>
+      <h3 style="margin-top:16px">Awaiting confirmation (${pending.length})</h3>
+      ${pending.length ? `<div class="tablewrap"><table><tr><th>Claimed</th><th>Member</th><th>For</th><th>Amount</th><th>Reference</th><th>Paid from</th><th></th></tr>${pending.map((x) => `<tr><td class="nowrap">${date(x.claimed_at)}</td><td class="notranslate">${e(x.user_name)}<br>+${e(x.user_phone)}</td><td>${e(x.label)}${x.item ? `<br><span class="small muted">${e(x.item)}</span>` : ''}</td><td class="notranslate"><b>${money(x.amount)}</b></td><td class="notranslate"><b>${e(x.reference)}</b></td><td>${e(x.sender || '—')}${x.has_proof ? `<br><a href="/api/admin/transfers/${x.id}/proof" target="_blank" rel="noopener">Receipt ↗</a>` : ''}</td>
+        <td><div class="row"><button class="btn sm" data-tconf="${x.id}">Money received — confirm</button><button class="btn sm ghost" data-trej="${x.id}">Not found</button></div></td></tr>`).join('')}</table></div>` : '<p class="muted">Nothing waiting.</p>'}
+      <h3 style="margin-top:22px">Recently confirmed</h3>${rows.filter((x) => x.status === 'paid').map((x) => `<div class="small">${date(x.paid_at)} · <span class="notranslate">${money(x.amount)}</span> · ${e(x.label)} · ${e(x.user_name)} · <span class="notranslate">${e(x.reference)}</span></div>`).join('') || '<p class="muted small">None yet.</p>'}`;
   };
   DG.adminTabs.reports = async () => {
     const t = await getTrust(), r = t.risk;
@@ -325,6 +449,8 @@
   };
   DG.adminBind = () => {
     const post = (sel, attr, fn) => app.querySelectorAll(sel).forEach((b) => b.addEventListener('click', () => busy(b, async () => { await fn(b, b.getAttribute(attr)); render(); })));
+    post('[data-tconf]', 'data-tconf', (_b, id) => (confirm('Confirm that this money has arrived in the bank account?') ? api(`/admin/transfers/${id}/confirm`, { method: 'POST' }) : null));
+    post('[data-trej]', 'data-trej', (_b, id) => { const reason = prompt('Note to the member (optional):'); return reason === null ? null : api(`/admin/transfers/${id}/reject`, { method: 'POST', body: { reason } }); });
     post('[data-sus]', 'data-sus', (b, id) => api(`/admin/users/${id}/suspend`, { method: 'POST', body: { suspended: b.dataset.v === '1' } }));
     post('[data-res]', 'data-res', (_b, id) => api(`/admin/reports/${id}/resolve`, { method: 'POST' }));
     post('[data-delpost]', 'data-delpost', (_b, id) => (confirm('Delete this article?') ? api(`/admin/posts/${id}`, { method: 'DELETE' }) : null));

@@ -7,8 +7,11 @@ const { db, getSetting } = require('./db');
 const { HttpError } = require('./auth');
 const listings = require('./listings');
 const push = require('./push');
+const payscrow = require('./payscrow');
 
 const DEMO = !config.PAYMENTS_LIVE;
+/** Extra payment purposes register here: purpose -> (payment, alreadyPaid, afterCommit[]) => { redirect, message } */
+const handlers = {};
 
 async function paystack(method, path, body) {
   const res = await fetch(`https://api.paystack.co${path}`, {
@@ -21,10 +24,24 @@ async function paystack(method, path, body) {
   return json.data;
 }
 
+/** The company account customers pay into. Set in Admin > Settings; when present, bank transfer is the payment method. */
+function bankDetails() {
+  const number = String(getSetting('bank_account_number') || '').replace(/\D/g, '');
+  const name = String(getSetting('bank_account_name') || '').trim();
+  return number && name ? { bank: String(getSetting('bank_name') || '').trim(), number, name } : null;
+}
+
 /** Start a payment. Returns { reference, url } - the browser is sent to url. */
 async function start(user, purpose, targetId, amount) {
   if (!(amount > 0)) throw new HttpError(400, 'Nothing to pay.');
-  if (DEMO && config.PRODUCTION) throw new HttpError(503, 'Payments are not configured yet. Please contact support.');
+  if (bankDetails()) {
+    // Bank transfer: the customer pays into the company account quoting this reference; an admin confirms receipt.
+    const reference = `DG-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    db.prepare('INSERT INTO payments(reference, user_id, purpose, target_id, amount, provider) VALUES(?,?,?,?,?,?)')
+      .run(reference, user.id, purpose, targetId, amount, 'transfer');
+    return { reference, url: `/pay/transfer?reference=${reference}` };
+  }
+  if (DEMO && !config.DEMO_PAYMENTS_OK) throw new HttpError(503, 'Payments are not configured yet. Please contact support.');
   const reference = `DG-${purpose.slice(0, 3).toUpperCase()}-${crypto.randomBytes(9).toString('hex')}`;
   db.prepare('INSERT INTO payments(reference, user_id, purpose, target_id, amount, provider) VALUES(?,?,?,?,?,?)')
     .run(reference, user.id, purpose, targetId, amount, DEMO ? 'demo' : 'paystack');
@@ -101,8 +118,9 @@ function fulfil(payment) {
           });
         });
       }
-      return { redirect: '/dashboard?tab=invest', message: 'Investment confirmed. Your units are in your portfolio.' };
+      return { redirect: '/invest?step=4', message: 'Investment confirmed. Your units are in your portfolio.' };
     }
+    if (handlers[fresh.purpose]) return handlers[fresh.purpose](fresh, already, after);
     return { redirect: '/dashboard', message: 'Payment received.' };
   })();
   for (const fn of after) fn();
@@ -125,14 +143,14 @@ async function verify(reference) {
 
 /** Demo checkout confirmation - only the payer, only when no payment provider is configured. */
 function demoConfirm(user, reference) {
-  if (!DEMO || config.PRODUCTION) throw new HttpError(404, 'Not available.');
+  if (!DEMO || !config.DEMO_PAYMENTS_OK) throw new HttpError(404, 'Not available.');
   const payment = db.prepare("SELECT * FROM payments WHERE reference = ? AND provider = 'demo'").get(String(reference || ''));
   if (!payment || payment.user_id !== user.id) throw new HttpError(404, 'Payment not found.');
   return { paid: true, ...fulfil(payment) };
 }
 
 function demoInfo(user, reference) {
-  if (!DEMO || config.PRODUCTION) throw new HttpError(404, 'Not available.');
+  if (!DEMO || !config.DEMO_PAYMENTS_OK) throw new HttpError(404, 'Not available.');
   const payment = db.prepare("SELECT reference, amount, purpose, status, user_id FROM payments WHERE reference = ? AND provider = 'demo'").get(String(reference || ''));
   if (!payment || payment.user_id !== user.id) throw new HttpError(404, 'Payment not found.');
   return payment;
@@ -221,10 +239,16 @@ function createEscrow(user, property, { amount, note }) {
   const mine = db.prepare("SELECT id FROM escrows WHERE property_id = ? AND buyer_id = ? AND status = 'awaiting_payment'").get(property.id, user.id);
   if (mine) return mine.id;
   const amt = listings.int(amount) || property.price;
-  const fee = Math.round((amt * Number(getSetting('escrow_fee_pct') || 0)) / 100);
+  // With PayScrow the escrow provider's own charge applies instead of ours.
+  const fee = payscrow.enabled() ? 0 : Math.round((amt * Number(getSetting('escrow_fee_pct') || 0)) / 100);
+  // Fees already paid to view or inspect this property are credited towards the purchase.
+  const credit = Math.min(fee + amt - 1, db
+    .prepare(`SELECT COALESCE(SUM(amount),0) AS n FROM payments WHERE user_id = ? AND status = 'paid' AND (
+                (purpose = 'unlock' AND target_id = ?) OR (purpose = 'inspection' AND target_id IN (SELECT id FROM inspections WHERE property_id = ?)))`)
+    .get(user.id, property.id, property.id).n);
   const id = db
-    .prepare('INSERT INTO escrows(property_id, buyer_id, seller_id, amount, fee, note) VALUES(?,?,?,?,?,?)')
-    .run(property.id, user.id, property.owner_id, amt, fee, listings.str(note, 500)).lastInsertRowid;
+    .prepare('INSERT INTO escrows(property_id, buyer_id, seller_id, amount, fee, note, credit) VALUES(?,?,?,?,?,?,?)')
+    .run(property.id, user.id, property.owner_id, amt, fee, listings.str(note, 500), credit).lastInsertRowid;
   escrowEvent(id, user.id, 'opened', listings.str(note, 500));
   push.notify({ userId: property.owner_id, title: 'Escrow opened', body: `A buyer opened escrow for ${property.title} (${listings.naira(amt)}).`, url: '/dashboard' });
   return id;
@@ -254,30 +278,89 @@ async function payEscrow(user, id) {
   if (e.status !== 'awaiting_payment') throw new HttpError(409, 'This escrow is not awaiting payment.');
   const held = db.prepare("SELECT 1 FROM escrows WHERE property_id = ? AND status IN ('funded','disputed')").get(e.property_id);
   if (held) throw new HttpError(409, 'Another buyer already has this property in escrow.');
-  return start(user, 'escrow', e.id, e.amount + e.fee);
+  if (payscrow.enabled()) {
+    // Reuse the payment page if one was already created for this escrow.
+    if (e.ps_link) {
+      const open = db.prepare("SELECT reference FROM payments WHERE reference = ? AND status = 'pending'").get(e.ps_ref);
+      if (open) return { reference: open.reference, url: e.ps_link };
+    }
+    const buyer = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+    const seller = db.prepare('SELECT * FROM users WHERE id = ?').get(e.seller_id);
+    const t = await payscrow.startTransaction({ escrow: e, property: listings.getProperty(e.property_id), buyer, seller, amount: e.amount - e.credit });
+    db.prepare("UPDATE escrows SET ps_number = ?, ps_ref = ?, ps_link = ?, fee = 0, updated_at = datetime('now') WHERE id = ?").run(t.number, t.reference, t.link, e.id);
+    db.prepare('INSERT INTO payments(reference, user_id, purpose, target_id, amount, provider) VALUES(?,?,?,?,?,?)').run(t.reference, user.id, 'escrow', e.id, Math.round(t.total), 'payscrow');
+    escrowEvent(e.id, user.id, 'payment started', `PayScrow ${t.number}`);
+    return { reference: t.reference, url: t.link };
+  }
+  return start(user, 'escrow', e.id, e.amount + e.fee - e.credit);
 }
 
 const setEscrow = (id, status) => db.prepare("UPDATE escrows SET status = ?, updated_at = datetime('now') WHERE id = ?").run(status, id);
 
-/** Buyer confirms (or admin settles a dispute): funds go to the seller and the property is marked sold. */
-function releaseEscrow(user, id) {
-  const e = mustEscrow(id);
-  const admin = user.role === 'admin';
-  if (!admin && e.buyer_id !== user.id) throw new HttpError(404, 'Escrow not found.');
-  if (!(e.status === 'funded' || (admin && e.status === 'disputed'))) throw new HttpError(409, 'This escrow cannot be released right now.');
+/** Funds go to the seller and the property is marked sold. */
+function completeRelease(e, actorId, note) {
+  if (e.status === 'released') return;
   setEscrow(e.id, 'released');
-  escrowEvent(e.id, user.id, 'released', admin && e.buyer_id !== user.id ? 'Released by admin' : 'Buyer confirmed handover');
+  escrowEvent(e.id, actorId, 'released', note);
   const p = listings.getProperty(e.property_id);
   listings.markSold(p);
   push.notify({ userId: e.seller_id, title: 'Escrow released', body: `Funds for ${p.title} have been released to you.`, url: '/dashboard' });
   push.notify({ userId: e.buyer_id, title: 'Purchase complete', body: `Escrow for ${p.title} is complete. Congratulations!`, url: '/dashboard' });
-  push.notifyAdmins({ title: 'Escrow released - pay out seller', body: `${listings.naira(e.amount)} for ${p.title}`, url: '/admin' });
+  push.notifyAdmins({ title: e.ps_number ? 'Escrow released via PayScrow' : 'Escrow released - pay out seller', body: `${listings.naira(e.amount)} for ${p.title}`, url: '/admin' });
 }
 
-function disputeEscrow(user, id, note) {
+function completeRefund(e, actorId, note) {
+  if (e.status === 'refunded') return;
+  setEscrow(e.id, 'refunded');
+  escrowEvent(e.id, actorId, 'refunded', listings.str(note, 500));
+  push.notify({ userId: e.buyer_id, title: 'Escrow refunded', body: 'Your escrow payment is being refunded.', url: '/dashboard' });
+  push.notify({ userId: e.seller_id, title: 'Escrow refunded', body: 'The escrow was refunded to the buyer.', url: '/dashboard' });
+}
+
+/** Buyer confirms (or admin settles a dispute). Funds held by PayScrow are released with the buyer's escrow code. */
+async function releaseEscrow(user, id, code) {
+  let e = mustEscrow(id);
+  const admin = user.role === 'admin';
+  if (e.ps_number) {
+    if (e.buyer_id !== user.id) throw new HttpError(403, 'Only the buyer can release funds held by PayScrow, using the escrow code PayScrow gave them.');
+    if (e.status !== 'funded') throw new HttpError(409, 'This escrow cannot be released right now.');
+    const c = String(code || '').trim();
+    if (!c) throw new HttpError(400, 'Enter the escrow code that PayScrow showed you after payment.');
+    if (!e.ps_guid) { await payscrow.sync(e); e = mustEscrow(id); }
+    if (!e.ps_guid) throw new HttpError(409, 'We are still waiting for PayScrow to confirm your payment details. Please try again in a few minutes.');
+    await payscrow.applyCode(e.ps_guid, c);
+    completeRelease(e, user.id, 'Buyer confirmed handover with the escrow code');
+    return;
+  }
+  if (!admin && e.buyer_id !== user.id) throw new HttpError(404, 'Escrow not found.');
+  if (!(e.status === 'funded' || (admin && e.status === 'disputed'))) throw new HttpError(409, 'This escrow cannot be released right now.');
+  completeRelease(e, user.id, admin && e.buyer_id !== user.id ? 'Released by admin' : 'Buyer confirmed handover');
+}
+
+/** Seller (or admin) tells PayScrow the handover is done; the buyer then approves or disputes, or the review period runs out. */
+async function submitDelivery(user, id, notes) {
+  const e = mustEscrow(id);
+  if (e.seller_id !== user.id && user.role !== 'admin') throw new HttpError(404, 'Escrow not found.');
+  if (!e.ps_number) throw new HttpError(409, 'This escrow is not held by PayScrow.');
+  if (e.status !== 'funded') throw new HttpError(409, 'Delivery details can be submitted once the buyer has paid.');
+  if (e.ps_fulfilled_at) throw new HttpError(409, 'Delivery details were already submitted.');
+  const text = listings.str(notes, 4000);
+  if (text.length < 10) throw new HttpError(400, 'Describe what was handed over (at least 10 characters).');
+  await payscrow.submitDelivery(e.ps_number, text, [`${config.BASE_URL}/p/${e.property_id}`]);
+  db.prepare("UPDATE escrows SET ps_fulfilled_at = datetime('now') WHERE id = ?").run(e.id);
+  escrowEvent(e.id, user.id, 'delivery details submitted', text.slice(0, 200));
+  push.notify({ userId: e.buyer_id, title: 'Handover reported', body: 'The seller says the handover is complete. Check your email from PayScrow to approve or raise a dispute.', url: '/dashboard?tab=escrow' });
+}
+
+async function disputeEscrow(user, id, note) {
   const e = mustEscrow(id);
   if (![e.buyer_id, e.seller_id].includes(user.id)) throw new HttpError(404, 'Escrow not found.');
   if (e.status !== 'funded') throw new HttpError(409, 'Only a funded escrow can be disputed.');
+  if (e.ps_number) {
+    const complaint = listings.str(note, 1000);
+    if (complaint.length < 10) throw new HttpError(400, 'Describe the problem in at least 10 characters.');
+    await payscrow.raiseDispute(e.ps_number, user.id === e.buyer_id ? 'customer' : 'merchant', complaint);
+  }
   setEscrow(e.id, 'disputed');
   escrowEvent(e.id, user.id, 'disputed', listings.str(note, 500));
   const other = user.id === e.buyer_id ? e.seller_id : e.buyer_id;
@@ -287,6 +370,7 @@ function disputeEscrow(user, id, note) {
 
 function refundEscrow(admin, id, note) {
   const e = mustEscrow(id);
+  if (e.ps_number) throw new HttpError(409, 'Funds are held by PayScrow; refunds follow its dispute process.');
   if (!['funded', 'disputed'].includes(e.status)) throw new HttpError(409, 'This escrow cannot be refunded.');
   setEscrow(e.id, 'refunded');
   escrowEvent(e.id, admin.id, 'refunded', listings.str(note, 500));
@@ -303,7 +387,7 @@ function cancelEscrow(user, id) {
 }
 
 module.exports = {
-  DEMO, start, verify, demoConfirm, demoInfo, webhook,
+  DEMO, handlers, bankDetails, fulfil, start, verify, demoConfirm, demoInfo, webhook,
   quote, subscribe, subscriptionsFor, payInstallment,
-  createEscrow, escrowsFor, payEscrow, releaseEscrow, disputeEscrow, refundEscrow, cancelEscrow,
+  createEscrow, escrowsFor, payEscrow, releaseEscrow, submitDelivery, completeRelease, completeRefund, disputeEscrow, refundEscrow, cancelEscrow,
 };

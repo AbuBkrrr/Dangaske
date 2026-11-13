@@ -16,7 +16,7 @@ const SAMPLES = [
   ['Corner-piece commercial plot', 'sale', 'commercial', 120000000, 'FCT Abuja', 'Abuja', 'Wuse 2', 0, 0, 1500, 'C of O', 'Corner piece, tarred road', false],
   ['5 bedroom detached house', 'sale', 'house', 150000000, 'Lagos', 'Lekki', 'Chevron Drive', 5, 6, 520, 'Governor\'s consent', 'Pool, BQ, smart home', true],
 ];
-const COLORS = [['#17573f', '#e3b04b'], ['#1f5fa8', '#f2ead8'], ['#7a4a1e', '#f3d9a4'], ['#3a4a6b', '#d8e2f0'], ['#5a2d4e', '#f0d6e6'], ['#205b5b', '#d6efe9']];
+const COLORS = [['#2424b8', '#d81f2a'], ['#1f5fa8', '#f2ead8'], ['#7a4a1e', '#f3d9a4'], ['#3a4a6b', '#d8e2f0'], ['#5a2d4e', '#f0d6e6'], ['#205b5b', '#d6efe9']];
 
 async function picture(i, n) {
   const [a, b] = COLORS[i % COLORS.length];

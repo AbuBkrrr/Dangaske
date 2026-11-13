@@ -40,6 +40,14 @@ async function login(c, phone, extra = {}) {
 }
 const png = (w, h) => sharp({ create: { width: w, height: h, channels: 3, background: { r: 30, g: 120, b: 90 }, noise: { type: 'gaussian', mean: 128, sigma: 40 } } }).png().toBuffer();
 
+async function kycFormData(extra = {}, skip = []) {
+  const f = new FormData();
+  const base = { full_name: 'Ada Okafor', dob: '1990-05-04', nationality: 'Nigerian', address: '12 Zaria Rd, Kano', occupation: 'Estate agent', source_of_funds: 'Business income', id_type: 'NIN slip', id_number: '12345678901', business_name: 'Ada Homes', rc_number: '1234567', consent: 'on', ...extra };
+  for (const [k, v] of Object.entries(base)) f.append(k, v);
+  for (const k of ['id_front', 'photo', 'address_proof', 'cac']) if (!skip.includes(k)) f.append(k, new Blob([await png(300, 200)], { type: 'image/png' }), `${k}.png`);
+  return f;
+}
+
 test.before(() => new Promise((r) => { server = app.listen(0, () => { base = `http://127.0.0.1:${server.address().port}`; r(); }); }));
 test.after(() => { server.close(); fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true }); });
 
@@ -54,6 +62,7 @@ test('phone sign-up with WhatsApp code', async () => {
   assert.equal(b.role, 'buyer'); // cannot self-assign admin
   assert.equal(b.phone, '2348022222222');
   assert.equal((await login(agent, '+2348033333333', { name: 'Ada', role: 'agent' })).role, 'agent');
+  db.prepare("UPDATE users SET verified = 1, kyc_status = 'approved' WHERE phone = '2348033333333'").run(); // verification itself is tested below
   assert.equal((await anon('POST', '/api/auth/request-otp', { phone: '08044444444' })).status, 200);
   assert.equal((await anon('POST', '/api/auth/request-otp', { phone: '08044444444' })).status, 429); // resend cooldown
 });
@@ -79,6 +88,7 @@ test('listing, automatic compression, publish + notifications', async () => {
 });
 
 test('pay to view full information', async () => {
+  await admin('PUT', '/api/admin/settings', { default_unlock_fee: 1000 }); // the fee is off by default; switch it on for this check
   const teaser = await buyer('GET', `/api/properties/${propId}`);
   assert.equal(teaser.body.locked, true);
   for (const k of ['address', 'contact_phone', 'media', 'description']) assert.equal(teaser.body[k], undefined);
@@ -115,6 +125,9 @@ test('agent listing needs approval; property requests', async () => {
   assert.equal((await agent('PATCH', `/api/properties/${propId}`, { price: 1 })).status, 403);
   const req = await buyer('POST', '/api/requests', { purpose: 'sale', type: 'land', state: 'Kano', max_price: 6000000, details: 'Need a dry plot' });
   assert.equal(req.status, 201);
+  assert.match(req.body.url, /pay\/demo/); // a request is paid for first
+  assert.equal((await anon('GET', '/api/requests')).body.length, 0); // unpaid requests stay hidden
+  await buyer('POST', `/api/payments/demo/${req.body.reference}`);
   assert.equal((await anon('GET', '/api/requests')).body[0].contact_phone, undefined);
   assert.equal((await agent('GET', '/api/requests')).body[0].contact_phone, '2348022222222');
   assert.equal((await agent('POST', `/api/admin/properties/${p.body.id}/approve`)).status, 403);
@@ -209,16 +222,26 @@ test('verification, flags, directory, reports, suspension, audit', async () => {
   assert.equal(dir.body[0].phone, undefined); // no contact leak around pay-to-view
   assert.equal((await buyer('PATCH', '/api/me', { name: 'Bala', account_type: 'developer' })).body.user.account_type, 'individual');
 
-  const form = new FormData();
-  form.append('doc_type', 'NIN slip');
-  form.append('document', new Blob([await png(600, 400)], { type: 'image/png' }), 'id.png');
-  const k = await agent('POST', '/api/me/kyc', null, form);
+  const agentId = (await agent('GET', '/api/me')).body.user.id;
+  db.prepare("UPDATE users SET verified = 0, kyc_status = 'none' WHERE id = ?").run(agentId);
+  const blocked = await agent('POST', '/api/properties', { title: 'Blocked', price: 1000000 });
+  assert.deepEqual([blocked.status, blocked.body.code], [403, 'kyc_required']); // professionals cannot post before KYC
+  assert.equal((await agent('PATCH', `/api/properties/${propId}`, { price: 1 })).status, 403);
+  assert.equal((await agent('POST', '/api/me/kyc', null, await kycFormData({}, ['cac']))).status, 400); // agency needs the CAC certificate
+  assert.equal((await agent('POST', '/api/me/kyc', null, await kycFormData({ dob: '2015-01-01' }))).status, 400); // under 18
+  assert.equal((await agent('POST', '/api/me/kyc', null, await kycFormData({ id_type: 'Library card' }))).status, 400);
+  const k = await agent('POST', '/api/me/kyc', null, await kycFormData());
+  assert.equal(k.status, 200, JSON.stringify(k.body));
   assert.equal(k.body.user.kyc_status, 'pending');
-  const agentId = k.body.user.id;
+  assert.equal(k.body.user.kyc_data.rc_number, '1234567');
+  assert.equal((await agent('POST', '/api/properties', { title: 'Still blocked', price: 1000000 })).status, 403); // pending is not enough
   assert.equal((await buyer('GET', `/api/admin/kyc/${agentId}/file`)).status, 403);
-  assert.equal(fs.readdirSync(path.join(process.env.DATA_DIR, 'kyc')).length, 1);
+  assert.equal((await admin('GET', `/api/admin/kyc/${agentId}/file?doc=cac`)).status, 200);
+  assert.equal((await admin('GET', `/api/admin/kyc/${agentId}/file?doc=nope`)).status, 404);
+  assert.equal(fs.readdirSync(path.join(process.env.DATA_DIR, 'kyc')).length, 4); // id, photo, address, CAC
   await admin('POST', `/api/admin/users/${agentId}/kyc`, { approve: true });
   assert.equal((await anon('GET', `/api/agents/${agentId}`)).body.verified, true);
+  assert.equal((await agent('POST', '/api/properties', { title: 'Allowed after KYC', price: 1000000 })).status, 201);
 
   assert.equal((await anon('POST', '/api/reports', { kind: 'listing', property_id: p.body.id, message: 'short' })).status, 400);
   assert.equal((await anon('POST', '/api/reports', { kind: 'listing', property_id: p.body.id, message: 'This listing looks fake to me' })).status, 201);
@@ -261,4 +284,329 @@ test('SPV investment: KYC gate, units, funding, payouts', async () => {
   s = (await anon('GET', `/api/spvs/${id}`)).body;
   assert.equal(s.status, 'funded');
   assert.equal((await buyer('POST', `/api/spvs/${id}/invest`, { units: 2, accept_risk: true })).status, 409);
+});
+
+test('customer experience: paid inspection, chat, saved search, receipts, reviews, credit, reminders', async () => {
+  const experience = require('../server/experience');
+  const cust = client();
+  await login(agent, '08033333333'); // signed out by the suspension test
+  await admin('PUT', '/api/admin/settings', { default_unlock_fee: 1000 }); // an earlier test made viewing free
+  const me = await login(cust, '08055555555', { name: 'Chidi Buyer', ref: experience.refCode(db.prepare("SELECT id FROM users WHERE phone = '2348033333333'").get().id) });
+  assert.equal((await agent('GET', '/api/my/referrals')).body.referred[0].name, 'Chidi');
+
+  await cust('POST', '/api/saved-searches', { name: 'Kano land', query: { type: 'land', state: 'Kano', max: '9000000' } });
+  const p = await agent('POST', '/api/properties', { title: 'Saved-search plot', price: 8000000, type: 'land', state: 'Kano', city: 'Kano', address: '9 Hidden Close', lat: 12.00234, lng: 8.59123, nearby: 'School, market' });
+  const pid = p.body.id;
+  await agent('POST', `/api/properties/${pid}/submit`);
+  await admin('POST', `/api/admin/properties/${pid}/approve`);
+  assert.ok((await cust('GET', '/api/notifications')).body.items.some((n) => n.title === 'New match: Kano land'));
+  const teaser = (await cust('GET', `/api/properties/${pid}`)).body;
+  assert.deepEqual([teaser.locked, teaser.lat, teaser.approx[0], teaser.nearby], [true, undefined, 12, 'School, market']); // exact pin hidden
+  assert.equal((await cust('POST', `/api/properties/${pid}/favourite`)).body.fav, true);
+  assert.equal((await cust('GET', '/api/my/favourites')).body.length, 1);
+
+  assert.equal((await cust('POST', `/api/properties/${pid}/chat`)).status, 403); // locked listing: no chat
+  const slot = new Date(Date.now() + 20 * 3600 * 1000); slot.setHours(10, 0, 0, 0); if (slot.getTime() < Date.now() + 3 * 3600 * 1000) slot.setDate(slot.getDate() + 1);
+  const iso = new Date(slot.getTime() - slot.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  assert.equal((await cust('POST', `/api/properties/${pid}/inspections`, { slot: '2020-01-01T10:00' })).status, 400);
+  const book = await cust('POST', `/api/properties/${pid}/inspections`, { slot: iso, note: 'Coming with my surveyor' });
+  assert.match(book.body.url, /pay\/demo/);
+  assert.equal((await agent('GET', '/api/my/inspections')).body.length, 0); // agent is not bothered until the fee is paid
+  await cust('POST', `/api/payments/demo/${book.body.reference}`);
+  const mineI = (await agent('GET', '/api/my/inspections')).body;
+  assert.deepEqual([mineI[0].status, mineI[0].fee, mineI[0].role], ['confirmed', 3000, 'agent']);
+  assert.equal((await cust('GET', `/api/properties/${pid}`)).body.address, '9 Hidden Close'); // paying to inspect unlocks details
+  assert.equal((await buyer('POST', `/api/properties/${pid}/inspections`, { slot: iso })).status, 409); // slot taken
+  assert.equal((await cust('POST', `/api/inspections/${mineI[0].id}/status`, { status: 'completed' })).status, 403);
+
+  const th = (await cust('POST', `/api/properties/${pid}/chat`)).body.id;
+  await cust('POST', `/api/threads/${th}/messages`, { body: 'Is the price negotiable?' });
+  assert.equal((await buyer('GET', `/api/threads/${th}`)).status, 404); // private
+  assert.equal((await agent('GET', '/api/my/threads')).body[0].unread, true);
+  assert.equal((await agent('GET', `/api/threads/${th}`)).body.messages[0].body, 'Is the price negotiable?');
+  assert.equal((await agent('GET', '/api/my/threads')).body[0].unread, false);
+
+  db.prepare('UPDATE inspections SET slot = ? WHERE id = ?').run(iso, mineI[0].id);
+  assert.equal(experience.remind().inspections, slot.getTime() - Date.now() <= 24 * 3600 * 1000 ? 1 : 0);
+  await agent('POST', `/api/inspections/${mineI[0].id}/status`, { status: 'completed' });
+  const agentId = mineI[0].agent_id;
+  assert.equal((await buyer('POST', `/api/agents/${agentId}/reviews`, { property_id: pid, rating: 5 })).status, 403); // no transaction
+  assert.equal((await cust('POST', `/api/agents/${agentId}/reviews`, { property_id: pid, rating: 4, comment: 'Punctual' })).status, 201);
+  assert.equal((await cust('POST', `/api/agents/${agentId}/reviews`, { property_id: pid, rating: 1 })).status, 403); // once only
+  assert.deepEqual([(await anon('GET', `/api/agents/${agentId}/reviews`)).body.avg, (await anon('GET', `/api/properties/${pid}`)).body.agent.rating], [4, 4]);
+
+  const e = (await cust('POST', `/api/properties/${pid}/escrow`, {})).body;
+  assert.equal(e.credit, 3000); // inspection fee credited to the purchase
+  const pay = await cust('POST', `/api/escrows/${e.id}/pay`);
+  assert.equal(db.prepare('SELECT amount FROM payments WHERE reference = ?').get(pay.body.reference).amount, 8000000 + 120000 - 3000);
+
+  const tc = await cust('POST', `/api/properties/${pid}/title-check`);
+  await cust('POST', `/api/payments/demo/${tc.body.reference}`);
+  const tid = (await cust('GET', '/api/my/title-checks')).body[0].id;
+  await admin('POST', `/api/admin/title-checks/${tid}/complete`, { result: 'Searched at the registry: title is clean, no encumbrance.' });
+  assert.match((await cust('GET', '/api/my/title-checks')).body[0].result, /clean/);
+
+  const pays = (await cust('GET', '/api/my/payments')).body;
+  assert.deepEqual(pays.map((x) => x.label).sort(), ['Inspection fee', 'Title verification report']);
+  const rc = await cust('GET', `/api/payments/${pays[0].reference}/receipt`);
+  assert.match(rc.body, /PAID/);
+  assert.equal((await buyer('GET', `/api/payments/${pays[0].reference}/receipt`)).status, 404);
+
+  const form = new FormData(); form.append('title', 'Offer letter'); form.append('user_id', String(me.id));
+  form.append('file', new Blob([await png(300, 300)], { type: 'image/png' }), 'offer.png');
+  assert.equal((await admin('POST', '/api/documents', null, form)).status, 201);
+  const doc = (await cust('GET', '/api/my/documents')).body[0];
+  assert.equal(doc.title, 'Offer letter');
+  assert.equal((await buyer('GET', `/api/documents/${doc.id}/file`)).status, 404);
+  assert.equal((await cust('DELETE', `/api/documents/${doc.id}`)).status, 403); // company documents stay
+
+  const sub = db.prepare("SELECT s.id FROM subscriptions s WHERE s.status = 'active'").get();
+  db.prepare("UPDATE installments SET due_date = date('now', '+1 day') WHERE subscription_id = ? AND seq = 1").run(sub.id);
+  assert.equal(experience.remind().instalments, 1);
+  assert.equal(experience.remind().instalments, 0); // not nagged twice
+  const desk = (await admin('GET', '/api/admin/desk')).body;
+  assert.ok(desk.inspections.length >= 1 && desk.referrals.length === 1 && desk.fees.collected === 3000);
+});
+
+test('SPV unit resale between verified members', async () => {
+  const s = db.prepare("SELECT id FROM spvs WHERE status = 'funded'").get().id; // buyer holds all 10 units
+  assert.equal((await buyer('POST', `/api/spvs/${s}/market`, { units: 3, price_per_unit: 55000 })).status, 404); // off by default
+  await admin('PUT', '/api/admin/settings', { secondary_market: '1' });
+  assert.equal((await buyer('POST', `/api/spvs/${s}/market`, { units: 11, price_per_unit: 55000 })).status, 409);
+  assert.equal((await buyer('POST', `/api/spvs/${s}/market`, { units: 3, price_per_unit: 55000 })).status, 201);
+  assert.equal((await buyer('POST', `/api/spvs/${s}/market`, { units: 8, price_per_unit: 55000 })).status, 409); // 3 already on offer
+  const l = (await agent('GET', `/api/spvs/${s}/market`)).body.listings[0];
+  assert.equal((await buyer('POST', `/api/unit-listings/${l.id}/buy`, { accept_risk: true })).status, 400); // own units
+  const pay = await agent('POST', `/api/unit-listings/${l.id}/buy`, { accept_risk: true }); // agent was KYC-approved earlier
+  assert.equal(pay.status, 200, JSON.stringify(pay.body));
+  await agent('POST', `/api/payments/demo/${pay.body.reference}`);
+  assert.equal((await agent('GET', '/api/my/investments')).body[0].units, 3);
+  assert.equal((await buyer('GET', '/api/my/investments')).body[0].units, 7);
+  const spv = (await anon('GET', `/api/spvs/${s}`)).body;
+  assert.deepEqual([spv.sold_units, spv.investors], [10, 2]); // total unchanged
+});
+
+test('email alongside WhatsApp; cron endpoint', async () => {
+  assert.equal((await buyer('POST', '/api/me/email', { email: 'not-an-email' })).status, 400);
+  const set = await buyer('POST', '/api/me/email', { email: 'Bala@Example.com' });
+  assert.deepEqual([set.body.user.email, set.body.user.email_verified], ['bala@example.com', false]);
+  assert.equal((await buyer('POST', '/api/me/email/verify', { code: '000000' })).status, 400);
+  assert.equal((await buyer('POST', '/api/me/email/verify', { code: set.body.demo_code })).body.user.email_verified, true);
+  const otp = await anon('POST', '/api/auth/request-otp', { phone: '08022222222' });
+  assert.deepEqual(otp.body.channels, ['whatsapp', 'email']); // code goes to both
+  assert.equal((await anon('POST', '/api/auth/request-otp', { phone: '08099998888' })).status, 429); // per-IP limit on code requests
+  assert.equal((await anon('GET', '/api/cron?key=x')).status, 404); // disabled without CRON_KEY
+  assert.equal(typeof app.start, 'function');
+});
+
+test('request fee is set by admin', async () => {
+  await admin('PUT', '/api/admin/settings', { request_fee: 0 });
+  const free = await buyer('POST', '/api/requests', { type: 'house', state: 'Kano', details: 'Free request' });
+  assert.equal(free.body.url, undefined);
+  assert.ok((await anon('GET', '/api/requests')).body.some((r) => r.details === 'Free request'));
+  await admin('PUT', '/api/admin/settings', { request_fee: 3500 });
+  assert.equal((await anon('GET', '/api/me')).body.config.request_fee, 3500);
+  const paid = await buyer('POST', '/api/requests', { type: 'land', details: 'Paid request' });
+  assert.equal(db.prepare('SELECT amount FROM payments WHERE reference = ?').get(paid.body.reference).amount, 3500);
+  const adminReq = await admin('POST', '/api/requests', { type: 'land', details: 'Admin request' });
+  assert.equal(adminReq.body.url, undefined); // admins are not charged
+});
+
+test('contact form forwards to the company email', async () => {
+  const mail = require('../server/mail');
+  const sent = []; const orig = mail.send; mail.send = async (...a) => { sent.push(a); return true; };
+  await admin('PUT', '/api/admin/settings', { contact_email: 'info@dangaskerealestate.com.ng' });
+  assert.equal((await anon('POST', '/api/reports', { kind: 'contact', name: 'Aisha', contact: '08031112222', message: 'I want to list my estate.' })).status, 201);
+  mail.send = orig;
+  assert.ok(sent.some(([to, subject]) => to === 'info@dangaskerealestate.com.ng' && /Aisha/.test(subject)));
+});
+
+test('inspection fee bands, land by distance, calendar slots', async () => {
+  await admin('PUT', '/api/admin/settings', { default_unlock_fee: 0 });
+  const fee = async (b) => { const p = await admin('POST', '/api/properties', { title: 'Fee test', ...b }); return (await admin('GET', `/api/properties/${p.body.id}`)).body.inspection_fee; };
+  assert.equal((await anon('GET', '/api/properties/1')).body.locked, false); // view-details fee is gone
+  assert.deepEqual([await fee({ purpose: 'rent', price: 1900000 }), await fee({ purpose: 'rent', price: 2000000 }), await fee({ purpose: 'shortlet', price: 500000 })], [3000, 5000, 3000]);
+  assert.deepEqual([await fee({ purpose: 'sale', price: 4900000 }), await fee({ purpose: 'sale', price: 5000000 }), await fee({ purpose: 'sale', price: 47000000 }), await fee({ purpose: 'sale', price: 50000000 })], [3000, 5000, 5000, 10000]);
+  assert.equal(await fee({ type: 'land', price: 3000000, city: 'Kano', state: 'Kano', lat: 12.0022, lng: 8.592 }), 3000); // in the city
+  const far = await fee({ type: 'land', price: 3000000, city: 'Kano', state: 'Kano', lat: 12.2022, lng: 8.592 }); // about 22 km out
+  assert.ok(far > 7000 && far < 8000, `far land fee ${far}`);
+  assert.equal(await fee({ type: 'land', price: 3000000, city: 'Kano', distance_km: 500 }), 25000); // capped
+  assert.equal(await fee({ type: 'land', price: 3000000, city: 'Nowhere' }), 3000); // no distance known: base fee
+  await admin('PUT', '/api/admin/settings', { insp_rent_high: 7500 });
+  assert.equal(await fee({ purpose: 'rent', price: 3000000 }), 7500); // admin can change a band
+  await admin('PUT', '/api/admin/settings', { insp_rent_high: 5000 });
+
+  const c = buyer;
+  const p = await admin('POST', '/api/properties', { title: 'Slot house', price: 2500000, purpose: 'rent', state: 'Kano' });
+  await admin('POST', `/api/properties/${p.body.id}/submit`);
+  const day = new Date(Date.now() + 5 * 86400e3).toISOString().slice(0, 10);
+  const pay = await c('POST', `/api/properties/${p.body.id}/inspections`, { slot: `${day}T10:00` });
+  assert.equal(db.prepare('SELECT amount FROM payments WHERE reference = ?').get(pay.body.reference).amount, 5000);
+  assert.deepEqual((await anon('GET', `/api/properties/${p.body.id}/slots?date=${day}`)).body.booked, []); // unpaid does not block
+  await c('POST', `/api/payments/demo/${pay.body.reference}`);
+  assert.deepEqual((await anon('GET', `/api/properties/${p.body.id}/slots?date=${day}`)).body.booked, ['10:00']);
+  const other = await admin('POST', '/api/properties', { title: 'Same agent, other house', price: 2500000, purpose: 'rent', state: 'Kano' });
+  await admin('POST', `/api/properties/${other.body.id}/submit`);
+  const c2 = agent;
+  assert.equal((await c2('POST', `/api/properties/${other.body.id}/inspections`, { slot: `${day}T10:00` })).status, 409); // the agent is busy then
+  assert.equal((await c2('POST', `/api/properties/${other.body.id}/inspections`, { slot: `${day}T11:00` })).status, 200);
+  assert.equal((await anon('GET', '/api/properties/1/slots?date=nonsense')).status, 400);
+});
+
+test('services directory lists only verified providers, by category', async () => {
+  db.prepare("UPDATE users SET account_type = 'service', service_category = 'legal' WHERE phone = '2348033333333'").run();
+  const rows = (await anon('GET', '/api/agents?type=service&category=legal')).body;
+  assert.equal(rows.length, 1);
+  assert.match(rows[0].phone, /^234/); // providers are meant to be contacted
+  assert.equal((await anon('GET', '/api/agents?type=service&category=surveying')).body.length, 0);
+  db.prepare("UPDATE users SET verified = 0 WHERE phone = '2348033333333'").run();
+  assert.equal((await anon('GET', '/api/agents?type=service')).body.length, 0); // unverified providers stay hidden
+  db.prepare("UPDATE users SET verified = 1, account_type = 'agency' WHERE phone = '2348033333333'").run();
+});
+
+test('bank transfer payments: pay into the company account, admin confirms', async () => {
+  assert.equal((await anon('GET', '/api/me')).body.config.pay_by_transfer, false);
+  await admin('PUT', '/api/admin/settings', { bank_name: 'Test MFB', bank_account_number: '0123 456 789', bank_account_name: 'Test Account' });
+  assert.equal((await anon('GET', '/api/me')).body.config.pay_by_transfer, true);
+  const c = buyer;
+  const p = await admin('POST', '/api/properties', { title: 'Transfer house', price: 3000000, purpose: 'rent', state: 'Kano' });
+  await admin('POST', `/api/properties/${p.body.id}/submit`);
+  const day = new Date(Date.now() + 9 * 86400e3).toISOString().slice(0, 10);
+  const pay = await c('POST', `/api/properties/${p.body.id}/inspections`, { slot: `${day}T14:00` });
+  assert.match(pay.body.url, /^\/pay\/transfer\?reference=DG-[0-9A-F]{8}$/);
+  const info = (await c('GET', `/api/payments/transfer/${pay.body.reference}`)).body;
+  assert.deepEqual([info.amount, info.bank.number, info.bank.name, info.status, info.label], [5000, '0123456789', 'Test Account', 'pending', 'Inspection fee']);
+  assert.equal((await agent('GET', `/api/payments/transfer/${pay.body.reference}`)).status, 404); // someone else's payment
+  assert.equal((await admin('GET', '/api/admin/transfers')).body.length, 0); // unclaimed ones are not listed
+  assert.equal((await c('GET', '/api/my/pending-payments')).body.length, 1);
+  const receipt = async (sender = 'Musa Ready') => { const f = new FormData(); f.append('sender', sender); f.append('receipt', new Blob([await png(200, 300)], { type: 'image/png' }), 'receipt.png'); return f; };
+  assert.equal((await c('POST', `/api/payments/transfer/${pay.body.reference}/claim`, null, (() => { const f = new FormData(); f.append('sender', 'No file'); return f; })())).status, 400); // a receipt is required
+  assert.equal((await agent('POST', `/api/payments/transfer/${pay.body.reference}/claim`, null, await receipt())).status, 404); // not their payment
+  assert.equal((await c('POST', `/api/payments/transfer/${pay.body.reference}/claim`, null, await receipt())).status, 200);
+  const list = (await admin('GET', '/api/admin/transfers')).body;
+  assert.deepEqual([list.length, list[0].sender, list[0].amount], [1, 'Musa Ready', 5000]);
+  assert.equal(list[0].has_proof, true);
+  assert.equal((await admin('GET', `/api/admin/transfers/${list[0].id}/proof`)).status, 200);
+  assert.equal((await c('GET', `/api/admin/transfers/${list[0].id}/proof`)).status, 403); // receipts are private
+  assert.equal((await c('POST', `/api/admin/transfers/${list[0].id}/confirm`)).status, 403); // members cannot confirm their own
+  assert.equal((await anon('GET', `/api/properties/${p.body.id}/slots?date=${day}`)).body.booked.length, 0); // not confirmed yet
+  assert.equal((await admin('POST', `/api/admin/transfers/${list[0].id}/confirm`)).status, 200);
+  assert.equal((await admin('POST', `/api/admin/transfers/${list[0].id}/confirm`)).status, 409); // only once
+  assert.deepEqual((await anon('GET', `/api/properties/${p.body.id}/slots?date=${day}`)).body.booked, ['14:00']); // booking confirmed by the payment
+  assert.equal((await c('GET', `/api/payments/${pay.body.reference}/receipt`)).body.includes('Bank transfer'), true);
+  assert.equal((await c('GET', '/api/my/pending-payments')).body.length, 0);
+  const pay2 = await c('POST', `/api/properties/${p.body.id}/title-check`);
+  await c('POST', `/api/payments/transfer/${pay2.body.reference}/claim`, null, await receipt('Someone'));
+  const l2 = (await admin('GET', '/api/admin/transfers')).body.find((x) => x.reference === pay2.body.reference);
+  assert.equal((await admin('POST', `/api/admin/transfers/${l2.id}/reject`, { reason: 'No matching credit' })).status, 200);
+  assert.equal((await c('GET', `/api/payments/transfer/${pay2.body.reference}`)).body.status, 'failed');
+  await admin('PUT', '/api/admin/settings', { bank_account_number: '' }); // back to card/demo for any later checks
+});
+
+test('PayScrow escrow: pay, webhook funds it, release by code, delivery review, disputes', async () => {
+  const crypto = require('crypto');
+  const config = require('../server/config');
+  const calls = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opts = {}) => {
+    if (!String(url).startsWith('https://api.payscrow.net')) return realFetch(url, opts);
+    const path = String(url).replace('https://api.payscrow.net', '');
+    const body = opts.body ? JSON.parse(opts.body) : null;
+    calls.push({ method: opts.method || 'GET', path, body, key: opts.headers.BrokerApiKey });
+    const ok = (o, status = 200) => new Response(JSON.stringify(o), { status });
+    if (path.endsWith('/transactions/start')) return ok({ success: true, data: { transactionNumber: `MKT-${calls.length}`, paymentLink: `https://payscrow.net/MarketPlace/Pay?transId=T${calls.length}`, totalPayable: 20150000, isSuccessful: true } });
+    if (path.endsWith('/fulfilment')) return ok({ isSuccessful: true, errors: [] });
+    if (path.endsWith('/applycode')) return ok(body.code === 'BAD' ? { success: false, message: 'Invalid code. Please ensure you have entered the correct code!', errors: ['Invalid code'] } : { message: 'Escrow Code applied successfully!', errors: [], isSuccessful: true }, body.code === 'BAD' ? 400 : 200);
+    if (path.endsWith('/raise-dispute')) return ok({ success: true, data: { isSuccessful: true } });
+    return ok({ success: true, data: { status: 'In Progress', inEscrow: true, inDispute: false } });
+  };
+  config.PAYSCROW_API_KEY = 'test-key';
+  config.PAYSCROW_WEBHOOK_SECRET = 'whsec_test';
+  try {
+    await admin('PUT', '/api/admin/settings', { contact_email: 'info@dangaskerealestate.com.ng', payscrow_merchant_charge_pct: 50 });
+    const buyerId = db.prepare("SELECT id FROM users WHERE phone = '2348022222222'").get().id;
+    db.prepare('UPDATE users SET email = ?, email_verified = 0 WHERE id = ?').run('buyer@example.com', buyerId);
+    const newEscrow = async (title) => {
+      const p = await admin('POST', '/api/properties', { title, price: 20000000, state: 'Kano', city: 'Kano' });
+      await admin('POST', `/api/properties/${p.body.id}/submit`);
+      const e = await buyer('POST', `/api/properties/${p.body.id}/escrow`, {});
+      assert.equal(e.status, 201, JSON.stringify(e.body));
+      assert.equal(e.body.fee, 0); // PayScrow's own charge applies, not ours
+      return { property: p.body.id, escrow: e.body.id };
+    };
+    const hook = async (payload, id) => {
+      const ts = Math.floor(Date.now() / 1000), raw = JSON.stringify(payload);
+      const sig = 'sha256=' + crypto.createHmac('sha256', 'whsec_test').update(`${ts}.${raw}`).digest('hex');
+      return fetch(`${base}/api/payscrow/webhook`, { method: 'POST', body: raw, headers: { 'Content-Type': 'application/json', 'X-PayScrow-Timestamp': String(ts), 'X-PayScrow-Signature': sig, 'X-PayScrow-Delivery-Id': id } });
+    };
+    const ref = (id) => db.prepare('SELECT ps_ref, ps_number FROM escrows WHERE id = ?').get(id);
+    const fund = async (id, guid, did) => {
+      const r = ref(id);
+      assert.equal((await hook({ transactionId: guid, transactionNumber: r.ps_number, externalReference: r.ps_ref, paymentStatus: 'Paid', escrowStatus: 'InEscrow', status: 'InProgress' }, did)).status, 200);
+    };
+    const state = (id) => db.prepare('SELECT status, ps_guid FROM escrows WHERE id = ?').get(id);
+
+    // --- pay
+    const a = await newEscrow('PayScrow house A');
+    assert.equal((await buyer('POST', `/api/escrows/${a.escrow}/pay`)).status, 400); // buyer's email is not confirmed
+    db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(buyerId);
+    const pay = await buyer('POST', `/api/escrows/${a.escrow}/pay`);
+    assert.equal(pay.status, 200, JSON.stringify(pay.body));
+    assert.match(pay.body.url, /^https:\/\/payscrow\.net\/MarketPlace\/Pay/);
+    const start = calls.find((c) => c.path.endsWith('/transactions/start'));
+    assert.equal(start.key, 'test-key');
+    assert.deepEqual([start.body.items[0].price, start.body.customerPhoneNo, start.body.merchantEmailAddress, start.body.merchantChargePercentage, start.body.currencyCode], [20000000, '08022222222', 'info@dangaskerealestate.com.ng', 50, 'NGN']);
+    assert.equal(db.prepare('SELECT amount, provider FROM payments WHERE reference = ?').get(ref(a.escrow).ps_ref).provider, 'payscrow');
+    assert.equal((await buyer('POST', `/api/escrows/${a.escrow}/pay`)).body.url, pay.body.url); // same payment page, no second transaction
+    assert.equal(calls.filter((c) => c.path.endsWith('/transactions/start')).length, 1);
+
+    // --- webhook funds the escrow
+    const forged = await fetch(`${base}/api/payscrow/webhook`, { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json', 'X-PayScrow-Timestamp': String(Math.floor(Date.now() / 1000)), 'X-PayScrow-Signature': 'sha256=00' } });
+    assert.equal(forged.status, 401);
+    assert.equal((await buyer('POST', `/api/escrows/${a.escrow}/release`, { code: 'ABC123' })).status, 409); // not funded yet
+    await fund(a.escrow, 'guid-A', 'del-1');
+    assert.deepEqual(state(a.escrow), { status: 'funded', ps_guid: 'guid-A' });
+    assert.equal((await (await hook({ transactionId: 'x', transactionNumber: ref(a.escrow).ps_number, externalReference: ref(a.escrow).ps_ref, paymentStatus: 'Paid' }, 'del-1')).json()).duplicate, true); // retries are ignored
+
+    // --- seller reports delivery; buyer releases with the code
+    assert.equal((await admin('POST', `/api/escrows/${a.escrow}/delivery`, { notes: 'short' })).status, 400);
+    assert.equal((await buyer('POST', `/api/escrows/${a.escrow}/delivery`, { notes: 'Keys and documents handed over' })).status, 404); // not the seller
+    assert.equal((await admin('POST', `/api/escrows/${a.escrow}/delivery`, { notes: 'Keys and documents handed over on site' })).status, 200);
+    const fulfil = calls.find((c) => c.path.endsWith('/fulfilment'));
+    assert.deepEqual(fulfil.body.evidenceLinks, [`${config.BASE_URL}/p/${a.property}`]);
+    assert.equal((await admin('POST', `/api/escrows/${a.escrow}/delivery`, { notes: 'Keys and documents handed over on site' })).status, 409);
+    assert.equal((await admin('POST', `/api/escrows/${a.escrow}/release`, { code: 'ABC123' })).status, 403); // only the buyer holds the code
+    assert.equal((await buyer('POST', `/api/escrows/${a.escrow}/release`, {})).status, 400); // code required
+    assert.equal((await buyer('POST', `/api/escrows/${a.escrow}/release`, { code: 'BAD' })).status, 400);
+    assert.equal(state(a.escrow).status, 'funded'); // a wrong code releases nothing
+    assert.equal((await buyer('POST', `/api/escrows/${a.escrow}/release`, { code: 'ABC123' })).status, 200);
+    assert.deepEqual(calls.find((c) => c.path.endsWith('/applycode') && c.body.code === 'ABC123').body, { transactionId: 'guid-A', code: 'ABC123' });
+    assert.equal(state(a.escrow).status, 'released');
+    assert.equal((await anon('GET', `/api/properties/${a.property}`)).body.status, 'sold');
+
+    // --- dispute, resolved by PayScrow as a refund
+    const b = await newEscrow('PayScrow house B');
+    await buyer('POST', `/api/escrows/${b.escrow}/pay`); await fund(b.escrow, 'guid-B', 'del-2');
+    assert.equal((await buyer('POST', `/api/escrows/${b.escrow}/dispute`, { note: 'no' })).status, 400);
+    assert.equal((await buyer('POST', `/api/escrows/${b.escrow}/dispute`, { note: 'The seller never showed up with the keys.' })).status, 200);
+    assert.equal(calls.find((c) => c.path.endsWith('/raise-dispute')).body.requestedBy, 'customer');
+    assert.equal(state(b.escrow).status, 'disputed');
+    assert.equal((await admin('POST', `/api/escrows/${b.escrow}/refund`, { note: 'x' })).status, 409); // PayScrow decides
+    await hook({ event: 'dispute.status_changed', eventId: 'e1', transactionNumber: ref(b.escrow).ps_number, externalReference: ref(b.escrow).ps_ref, disputeStage: 'Resolved', resolutionType: 'Refund', disputeReference: 'DIS-1' }, 'del-3');
+    assert.equal(state(b.escrow).status, 'refunded');
+    assert.equal((await anon('GET', `/api/properties/${b.property}`)).body.status, 'active'); // back on the market
+
+    // --- automatic release after the customer review period
+    const c = await newEscrow('PayScrow house C');
+    await buyer('POST', `/api/escrows/${c.escrow}/pay`); await fund(c.escrow, 'guid-C', 'del-4');
+    await hook({ event: 'transaction.review_started', eventId: 'e2', transactionNumber: ref(c.escrow).ps_number, externalReference: ref(c.escrow).ps_ref, reviewDueUtc: '2026-12-01T10:00:00Z' }, 'del-5');
+    assert.equal(db.prepare('SELECT ps_review_due FROM escrows WHERE id = ?').get(c.escrow).ps_review_due, '2026-12-01 10:00:00');
+    await hook({ event: 'transaction.release_authorized', eventId: 'e3', transactionNumber: ref(c.escrow).ps_number, externalReference: ref(c.escrow).ps_ref }, 'del-6');
+    assert.equal(state(c.escrow).status, 'released');
+    assert.equal((await anon('GET', `/api/properties/${c.property}`)).body.status, 'sold');
+  } finally {
+    global.fetch = realFetch;
+    config.PAYSCROW_API_KEY = '';
+    config.PAYSCROW_WEBHOOK_SECRET = '';
+  }
 });

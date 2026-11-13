@@ -1,0 +1,7 @@
+dangaskerealestate.com.ng, www.dangaskerealestate.com.ng {
+	encode gzip
+	request_body {
+		max_size 160MB
+	}
+	reverse_proxy web:3000
+}

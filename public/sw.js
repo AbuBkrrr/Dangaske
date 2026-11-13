@@ -6,7 +6,7 @@ self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch { data = { title: event.data && event.data.text() }; }
   event.waitUntil(
-    self.registration.showNotification(data.title || 'DanGida', {
+    self.registration.showNotification(data.title || 'Dangaske Real Estate', {
       body: data.body || '',
       icon: '/icon-192.png',
       badge: '/icon-192.png',
