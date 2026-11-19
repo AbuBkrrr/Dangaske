@@ -690,3 +690,26 @@ test('password reset by emailed code', async () => {
   assert.equal((await anon('POST', '/api/auth/login', { phone, password: 'brand-new-pass' })).status, 200);
   assert.equal((await anon('POST', '/api/auth/reset-request', { phone: '08000000000' })).status, 200); // unknown numbers get the same answer
 });
+
+test('admin reset, member reset request and change password', async () => {
+  const phone = '08088880001';
+  await login(client(), phone, { name: 'No Email Person' });
+  assert.equal((await anon('POST', '/api/auth/reset-request-admin', { phone })).status, 200);
+  const list = (await admin('GET', '/api/admin/reset-requests')).body;
+  const row = list.find((x) => x.phone === '2348088880001');
+  assert.ok(row, 'request appears for admin');
+  const r = await admin('POST', `/api/admin/users/${row.id}/reset-password`, {});
+  assert.equal(r.status, 200);
+  assert.ok(r.body.password.length >= 8);
+  assert.equal((await anon('POST', '/api/auth/login', { phone, password: r.body.password })).status, 200);
+  assert.equal((await admin('GET', '/api/admin/reset-requests')).body.some((x) => x.id === row.id), false); // closed
+  const me = client(); await anon('POST', '/api/auth/login', { phone, password: r.body.password });
+  const ok = await anon('POST', '/api/auth/login', { phone, password: r.body.password });
+  assert.equal(ok.status, 200);
+  const c2 = client();
+  const sign = await c2('POST', '/api/auth/login', { phone, password: r.body.password });
+  assert.equal((await c2('POST', '/api/me/password', { current: 'wrong-current', password: 'another-pass-1' })).status, 400);
+  assert.equal((await c2('POST', '/api/me/password', { current: r.body.password, password: 'another-pass-1' })).status, 200);
+  assert.equal((await anon('POST', '/api/auth/login', { phone, password: 'another-pass-1' })).status, 200);
+  assert.equal((await buyer('POST', `/api/admin/users/${row.id}/reset-password`, {})).status, 403);
+});

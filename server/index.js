@@ -126,6 +126,25 @@ api.post('/auth/login', auth.rateLimit('login', 30, 15 * 60 * 1000), (req, res) 
 });
 
 // Password reset: a code goes to the member's confirmed email. Admins can also reset from the server (setpassword.js).
+// For members with no confirmed email: their request appears in Admin > Verification, and an admin resets the password.
+api.post('/auth/reset-request-admin', auth.rateLimit('reset-admin', 5, 60 * 60 * 1000), (req, res) => {
+  const phone = auth.normalizePhone(req.body.phone);
+  const u = phone ? db.prepare('SELECT id FROM users WHERE phone = ?').get(phone) : null;
+  if (u) db.prepare('INSERT INTO reset_requests(user_id) VALUES(?) ON CONFLICT(user_id) DO UPDATE SET created_at = datetime(\'now\')').run(u.id);
+  res.json({ ok: true });
+});
+
+// Member changes their own password while signed in.
+api.post('/me/password', requireAuth, auth.rateLimit('my-password', 10, 60 * 60 * 1000), (req, res) => {
+  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!auth.checkPassword(req.body.current, u.password_hash)) throw new HttpError(400, 'Your current password is not right.');
+  const password = String(req.body.password || '');
+  if (password.length < 8) throw new HttpError(400, 'Choose a password of at least 8 characters.');
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(auth.hashPassword(password), u.id);
+  audit(u.id, 'password changed');
+  res.json({ ok: true });
+});
+
 api.post('/auth/reset-request', auth.rateLimit('reset', 8, 60 * 60 * 1000), async (req, res) => {
   const phone = auth.normalizePhone(req.body.phone);
   const u = phone ? db.prepare('SELECT * FROM users WHERE phone = ?').get(phone) : null;
@@ -536,6 +555,22 @@ admin.post('/users/:id/role', (req, res) => {
 });
 
 // Sends a real test message and returns the mail server's answer, so SMTP problems are visible.
+admin.get('/reset-requests', (_req, res) => {
+  res.json(db.prepare('SELECT u.id, u.name, u.phone, u.email, u.email_verified, r.created_at FROM reset_requests r JOIN users u ON u.id = r.user_id ORDER BY r.created_at').all());
+});
+
+// Gives the member a one-time temporary password, shown to the admin once. Signs the member out everywhere.
+admin.post('/users/:id/reset-password', (req, res) => {
+  const u = db.prepare('SELECT id, phone FROM users WHERE id = ?').get(Number(req.params.id) || 0);
+  if (!u) throw new HttpError(404, 'Member not found.');
+  const password = require('crypto').randomBytes(6).toString('base64url');
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(auth.hashPassword(password), u.id);
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(u.id);
+  db.prepare('DELETE FROM reset_requests WHERE user_id = ?').run(u.id);
+  audit(req.user.id, 'admin reset password', `member ${u.id}`);
+  res.json({ password, phone: u.phone });
+});
+
 admin.post('/test-email', async (req, res) => {
   const to = String(req.body.to || '').trim() || allSettings().contact_email || req.user.email;
   const r = await mail.deliver(to, `Test email from ${config.SITE_NAME}`, 'This is a test. If you can read this, email sending works.');

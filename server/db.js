@@ -229,6 +229,10 @@ addColumn('properties', 'distance_km', 'REAL');
 addColumn('payments', 'claimed_at', 'TEXT');
 addColumn('payments', 'proof', "TEXT NOT NULL DEFAULT ''");
 addColumn('payments', 'sender', "TEXT NOT NULL DEFAULT ''");
+db.exec(`CREATE TABLE IF NOT EXISTS reset_requests (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
 addColumn('users', 'password_hash', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'phone_verified', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'kyc_data', "TEXT NOT NULL DEFAULT '{}'");

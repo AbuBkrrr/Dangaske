@@ -72,6 +72,7 @@
       <form id="frs" class="grid" hidden><p class="small muted" style="margin:0">Enter your phone number. If it has a confirmed email address, we will send a reset code to it.</p>
         <div><label for="rp">Phone number</label><input id="rp" name="phone" type="tel" inputmode="tel" required></div><button class="btn block" id="rsend">Send reset code</button>
         <div id="rstep2" hidden><div><label for="rc">6-digit code</label><input id="rc" name="code" inputmode="numeric" maxlength="6"></div><div><label for="rnp">New password <span class="small muted">(at least 8 characters)</span></label><input id="rnp" name="password" type="password" minlength="8" autocomplete="new-password"></div><button class="btn block gold">Set new password</button></div>
+        <p class="small"><a href="#" id="noemail">No email on this account? Ask an admin to reset it</a></p>
         <p class="small"><a href="#" id="backin">← Back to sign in</a></p></form>
       <form id="fup" class="grid" hidden><div><label for="un">Full name</label><input id="un" name="name" autocomplete="name" required maxlength="80"></div>
         <div><label for="up">Phone number</label><input id="up" name="phone" type="tel" inputmode="tel" autocomplete="tel" required></div>
@@ -91,6 +92,12 @@
     });
     const showReset = (on) => { $('#fin', m).hidden = on; $('#fup', m).hidden = true; $('#frs', m).hidden = !on; m.querySelectorAll('[data-t]').forEach((x) => x.classList.toggle('on', false)); };
     $('#forgot', m).addEventListener('click', (ev) => { ev.preventDefault(); showReset(true); });
+    $('#noemail', m).addEventListener('click', (ev) => {
+      ev.preventDefault();
+      const phone = $('#rp', m).value.trim();
+      if (!phone) { toast('Enter your phone number first.', true); return; }
+      busy(ev.target, async () => { await api('/auth/reset-request-admin', { method: 'POST', body: { phone } }); toast('Request sent. An admin will contact you on WhatsApp or by phone to reset your password.'); });
+    });
     $('#backin', m).addEventListener('click', (ev) => { ev.preventDefault(); showReset(false); m.querySelector('[data-t=in]').classList.add('on'); });
     let resetPhone = '';
     $('#frs', m).addEventListener('submit', (ev) => {
