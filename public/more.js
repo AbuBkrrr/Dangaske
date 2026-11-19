@@ -262,5 +262,65 @@
     app.querySelectorAll('.tcf').forEach((f) => f.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', f), async () => { await api(`/admin/title-checks/${f.dataset.id}/complete`, { method: 'POST', body: formData(f) }); toast('Report sent.'); render(); }); }));
     const a = $('#adoc'); if (a) a.addEventListener('submit', (ev) => { ev.preventDefault(); busy($('button', a), async () => { await api('/documents', { method: 'POST', form: new FormData(a) }); toast('Document sent to the member.'); a.reset(); }); });
   };
+  // ---------- install prompt (Android: install button; iPhone: Safari instructions) ----------
+  window.addEventListener('beforeinstallprompt', (ev) => { ev.preventDefault(); window.__dgInstall = ev; });
+  DG.ACTIONS.install = async () => {
+    const ev = window.__dgInstall;
+    if (ev) { ev.prompt(); window.__dgInstall = null; return; }
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    toast(ios ? 'On iPhone: tap Share (the box with an arrow) in Safari, then “Add to Home Screen”. Open the app from your home screen to get alerts.' : 'Open your browser menu and choose “Install app” or “Add to Home screen”.');
+  };
+
+  // ---------- studio: the agent's workspace (listings, photo order, activity) ----------
+  route(/^\/studio$/, async (_m, q) => {
+    if (!S.user) { DG.openLogin(); app.innerHTML = '<p class="pad center muted">Sign in to open your studio.</p>'; return; }
+    if (!['agent', 'admin'].includes(S.user.role)) { app.innerHTML = '<div class="pad center"><h2>The studio is for agents and developers</h2><p class="muted">Buyers can <a href="/request" data-link>request a property</a> or browse listings.</p></div>'; return; }
+    if (S.user.role === 'agent' && !S.user.verified) { app.innerHTML = `<div class="pad center"><h2>Verify your identity first</h2><p class="muted">${S.user.kyc_status === 'pending' ? 'Your documents are under review.' : 'Complete identity verification (KYC) to open your studio and post listings.'}</p><a class="btn gold" href="/kyc" data-link>${S.user.kyc_status === 'pending' ? 'View status' : 'Complete KYC'}</a></div>`; return; }
+    const tab = q.get('tab') || 'listings';
+    const [mine, notes] = await Promise.all([api('/my/properties'), api('/notifications')]);
+    const count = (s) => mine.filter((p) => p.status === s).length;
+    const views = mine.reduce((a, p) => a + (p.views || 0), 0);
+    const stat = (n, t) => `<div class="stat"><b>${n}</b>${t}</div>`;
+    const card = (p) => `<div class="card" style="display:grid;grid-template-columns:110px 1fr;gap:14px;margin-bottom:12px">
+      ${p.cover_thumb ? `<img src="${e(p.cover_thumb)}" alt="" style="width:110px;height:84px;object-fit:cover;border-radius:10px">` : '<div style="width:110px;height:84px;background:#e6e0d2;border-radius:10px"></div>'}
+      <div><div class="spread"><b>${e(p.title)}</b>${status(p.status)}</div>
+        <div class="small muted notranslate">${money(p.price)} · ${e(DG.place(p))}</div>
+        <div class="small">👁 ${p.views || 0} views · ${p.image_count} photos${p.video_count ? ` · ${p.video_count} videos` : ''}</div>
+        <div class="row" style="margin-top:6px"><a class="btn sm" href="/post?id=${p.id}" data-link>${p.status === 'draft' ? 'Arrange & post' : 'Edit'}</a><a class="btn sm ghost" href="/p/${p.id}" data-link>View</a></div></div></div>`;
+    const feed = notes.items.map((x, i) => `<a class="notif ${i < notes.unread ? 'unread' : ''}" href="${e(x.url)}" data-link><b>${e(x.title)}</b><br><span class="small">${e(x.body)}</span> <span class="small muted">· ${date(x.created_at)}</span></a>`).join('') || '<p class="muted">No activity yet.</p>';
+    const body = tab === 'activity'
+      ? `<p class="small muted">New listings, sales and views of your listings.</p>${feed}`
+      : (mine.length ? mine.map(card).join('') : '<p class="muted">No listings yet. Add one, or send photos and details from WhatsApp.</p>');
+    app.innerHTML = `<h1 style="margin-top:28px">My studio</h1>
+      <p class="muted">Welcome${S.user.name ? ', ' + e(S.user.name) : ''}. List properties, track views and see what is happening.</p>
+      <div class="stats" style="margin:14px 0">${stat(count('active'), 'live')}${stat(count('draft'), 'drafts')}${stat(count('pending'), 'awaiting approval')}${stat(views, 'views')}</div>
+      <div class="grid g2" style="margin-bottom:16px">
+        <a class="card" href="/post" data-link><h3>＋ New listing</h3><span class="muted small">Details, asking price, Google Maps pin, photos and video.</span></a>
+        <div class="card"><h3>By WhatsApp</h3><p class="small muted">Send photos, videos and details to <b class="notranslate">${e(S.cfg.listing_whatsapp || 'the Dangaske listing number')}</b>. Start with <b>NEW</b>, then <b>PUBLISH</b>. Your draft appears here so you can arrange and post it. Share a location pin to set the map.</p></div></div>
+      <div class="tabs"><a class="${tab === 'listings' ? 'on' : ''}" href="/studio" data-link>Listings</a><a class="${tab === 'activity' ? 'on' : ''}" href="/studio?tab=activity" data-link>Activity${notes.unread ? ` (${notes.unread})` : ''}</a></div>${body}`;
+    if (tab === 'activity') api('/notifications/seen', { method: 'POST' }).catch(() => {});
+  });
+
+  // Move a photo earlier or later; the server makes the first photo the cover.
+  const reorder = async (b, dir) => {
+    const pid = new URLSearchParams(location.search).get('id');
+    const p = await api('/properties/' + pid);
+    const list = p.media.map((m) => m.id), i = list.indexOf(Number(b.dataset.m)), j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    await api(`/properties/${pid}/media/order`, { method: 'POST', body: { ids: list } });
+    render();
+  };
+  Object.assign(DG.ACTIONS, {
+    mup: (b) => busy(b, () => reorder(b, -1)),
+    mdown: (b) => busy(b, () => reorder(b, 1)),
+    testmail: (b) => busy(b, async () => {
+      const to = prompt('Send a test email to:', S.user.email || '');
+      if (!to) return;
+      const r = await api('/admin/test-email', { method: 'POST', body: { to } });
+      toast(r.ok ? (r.demo ? 'Demo mode: the email is logged, not sent.' : `Sent to ${r.to}. Check the inbox and spam folder.`) : `Not sent: ${r.error}`, !r.ok);
+    }),
+  });
+
   void modal; void closeModal;
 })();

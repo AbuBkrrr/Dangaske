@@ -246,6 +246,7 @@ const DEFAULT_SETTINGS = {
   support_whatsapp: '2348037572052',
   phones: '+234 803 757 2052, +234 816 130 4050',
   bank_name: '', bank_account_number: '', bank_account_name: '', // account customers pay into by bank transfer
+  listing_whatsapp: '',       // WhatsApp number agents send listings to
   payscrow_merchant_charge_pct: '50', // share of PayScrow's charge the seller bears (0-100); the buyer pays the rest
   request_fee: '2000',        // paid by a buyer/agent to publish a property request (0 = free)
   inspection_fee: '5000',     // fallback when no price band applies

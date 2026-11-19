@@ -610,3 +610,48 @@ test('PayScrow escrow: pay, webhook funds it, release by code, delivery review, 
     config.PAYSCROW_WEBHOOK_SECRET = '';
   }
 });
+
+test('studio: photo order, views, Google Maps pins, WhatsApp location, test email', async () => {
+  const listings = require('../server/listings');
+  const whatsapp = require('../server/whatsapp');
+  assert.deepEqual(listings.coordsFromLink('https://www.google.com/maps/place/Kano/data=!3d12.0022!4d8.5920'), { lat: 12.0022, lng: 8.592 });
+  assert.deepEqual(listings.coordsFromLink('https://maps.app.goo.gl/x?q=6.5244,3.3792'), { lat: 6.5244, lng: 3.3792 });
+  assert.deepEqual(listings.coordsFromLink('11.7469, 9.0'), { lat: 11.7469, lng: 9 });
+  assert.equal(listings.coordsFromLink('https://example.com/nothing'), null);
+
+  const made = await agent('POST', '/api/properties', { title: 'Studio house', price: 9000000, state: 'Kano', city: 'Kano', map_url: 'https://www.google.com/maps/place/Kano/@12.0022,8.5920,17z' });
+  assert.equal(made.status, 201);
+  const id = made.body.id;
+  const full = (await admin('GET', `/api/properties/${id}`)).body;
+  assert.deepEqual([full.lat, full.lng], [12.0022, 8.592]); // pin read from the link
+
+  const form = new FormData();
+  for (const n of ['one', 'two', 'three']) form.append('files', new Blob([await png(800, 600)], { type: 'image/png' }), `${n}.png`);
+  const up = await agent('POST', `/api/properties/${id}/media`, null, form);
+  assert.equal(up.status, 200, JSON.stringify(up.body));
+  const ids = up.body.media.map((m) => m.id);
+  assert.equal(up.body.media[0].is_cover, true);
+  assert.equal((await agent('POST', `/api/properties/${id}/media/order`, { ids: [999999] })).status, 400);
+  const reversed = [...ids].reverse();
+  const re = await agent('POST', `/api/properties/${id}/media/order`, { ids: reversed });
+  assert.deepEqual(re.body.media.map((m) => m.id), reversed);
+  assert.equal(re.body.media[0].is_cover, true); // first in the new order is the cover
+
+  assert.equal((await agent('POST', `/api/properties/${id}/submit`)).body.status, 'pending');
+  await admin('POST', `/api/admin/properties/${id}/approve`);
+  await buyer('GET', `/api/properties/${id}`);
+  await buyer('GET', `/api/properties/${id}`); // same viewer, same day: counted once per view
+  assert.equal((await agent('GET', `/api/properties/${id}`)).body.views, 2);
+  assert.ok((await agent('GET', '/api/notifications')).body.items.some((n) => n.title === 'Listing viewed' && /viewed/.test(n.body)));
+
+  const agentRow = db.prepare("SELECT * FROM users WHERE phone = '2348033333333'").get();
+  whatsapp.handleText(agentRow, 'NEW\nTitle: Pinned plot\nPrice: 2000000');
+  const draftId = Number(whatsapp.handleText(agentRow, 'NEW\nTitle: Pinned plot 2\nPrice: 2000000').match(/#(\d+)/)[1]);
+  assert.match(whatsapp.handleLocation(agentRow, { latitude: 11.7469, longitude: 9 }), /pinned/i);
+  const row = db.prepare('SELECT lat, lng FROM properties WHERE id = ?').get(draftId);
+  assert.deepEqual([row.lat, row.lng], [11.7469, 9]);
+
+  const t = await admin('POST', '/api/admin/test-email', { to: 'owner@example.com' });
+  assert.equal(t.body.ok, true);
+  assert.equal(t.body.live, false); // no SMTP in tests: reported as demo, not sent
+});

@@ -110,7 +110,7 @@ api.get('/me', (req, res) => {
       default_unlock_fee: Number(s.default_unlock_fee),
       escrow_fee_pct: Number(s.escrow_fee_pct),
       support_whatsapp: s.support_whatsapp,
-      pay_by_transfer: Boolean(payments.bankDetails()), request_fee: Number(s.request_fee), inspection_fee: Number(s.inspection_fee), title_check_fee: Number(s.title_check_fee), referral_reward: Number(s.referral_reward), secondary_market: s.secondary_market === '1',
+      pay_by_transfer: Boolean(payments.bankDetails()), listing_whatsapp: s.listing_whatsapp, request_fee: Number(s.request_fee), inspection_fee: Number(s.inspection_fee), title_check_fee: Number(s.title_check_fee), referral_reward: Number(s.referral_reward), secondary_market: s.secondary_market === '1',
       phones: s.phones, rc_number: config.RC_NUMBER,
       contact_email: s.contact_email,
       office_address: s.office_address,
@@ -130,6 +130,7 @@ api.get('/properties/:id', (req, res) => {
   const p = listings.mustGet(req.params.id);
   const visible = ['active', 'sold'].includes(p.status) || listings.canManage(req.user, p);
   if (!visible) throw new HttpError(404, 'Listing not found.');
+  listings.recordView(p, req.user, req.ip);
   const out = listings.present(p, req.user);
   if (p.easy_buy && p.status === 'active') {
     out.plans = db.prepare('SELECT * FROM plans WHERE active = 1 ORDER BY months').all().map((pl) => payments.quote(p.price, pl));
@@ -192,6 +193,19 @@ api.delete('/properties/:id/media/:mediaId', requireAuth, (req, res) => {
   const row = db.prepare('SELECT id FROM media WHERE id = ? AND property_id = ?').get(Number(req.params.mediaId) || 0, p.id);
   if (!row) throw new HttpError(404, 'Media not found.');
   media.deleteMedia(row.id);
+  res.json(listings.present(listings.getProperty(p.id), req.user));
+});
+
+// Photo order: the first photo in the list becomes the cover.
+api.post('/properties/:id/media/order', requireAuth, (req, res) => {
+  const p = manageable(req);
+  const ids = (Array.isArray(req.body.ids) ? req.body.ids : []).map(Number).filter(Boolean);
+  const mine = db.prepare('SELECT id, kind FROM media WHERE property_id = ?').all(p.id);
+  if (ids.some((id) => !mine.some((m) => m.id === id))) throw new HttpError(400, 'Unknown media item.');
+  const upd = db.prepare('UPDATE media SET sort_order = ? WHERE id = ?');
+  db.transaction(() => ids.forEach((id, i) => upd.run(i + 1, id)))();
+  const first = ids.find((id) => mine.some((m) => m.id === id && m.kind === 'image'));
+  if (first) db.prepare('UPDATE properties SET cover_media_id = ? WHERE id = ?').run(first, p.id);
   res.json(listings.present(listings.getProperty(p.id), req.user));
 });
 
@@ -461,6 +475,13 @@ admin.post('/users/:id/role', (req, res) => {
   if (Number(req.params.id) === req.user.id) throw new HttpError(400, 'You cannot change your own role.');
   db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, Number(req.params.id) || 0);
   res.json({ ok: true });
+});
+
+// Sends a real test message and returns the mail server's answer, so SMTP problems are visible.
+admin.post('/test-email', async (req, res) => {
+  const to = String(req.body.to || '').trim() || allSettings().contact_email || req.user.email;
+  const r = await mail.deliver(to, `Test email from ${config.SITE_NAME}`, 'This is a test. If you can read this, email sending works.');
+  res.json({ ...r, to, live: mail.LIVE });
 });
 
 admin.post('/broadcast', (req, res) => {

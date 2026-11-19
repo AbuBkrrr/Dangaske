@@ -1,6 +1,6 @@
 // Property listing logic shared by the web API and the WhatsApp bot.
 const config = require('./config');
-const { db, getSetting } = require('./db');
+const { db, getSetting, addColumn } = require('./db');
 const { HttpError } = require('./auth');
 const media = require('./media');
 const push = require('./push');
@@ -78,6 +78,9 @@ function cleanFields(input, { partial = false } = {}) {
   set('new_dev', input.new_dev === true || /^(1|true|yes|y)$/i.test(String(input.new_dev)) ? 1 : 0);
   if (has('distance_km')) { const n = Number(input.distance_km); out.distance_km = n > 0 ? Math.min(n, 2000) : null; }
   if (has('unlock_fee')) out.unlock_fee = input.unlock_fee === '' ? null : int(input.unlock_fee, 1e7);
+  // A Google Maps link sets the pin unless latitude/longitude were typed in.
+  const typedCoords = [input.lat, input.lng].some((v) => v !== undefined && v !== null && v !== '');
+  if (out.map_url && !typedCoords) { const c = coordsFromLink(out.map_url); if (c) { out.lat = c.lat; out.lng = c.lng; } }
   return out;
 }
 
@@ -153,6 +156,7 @@ function present(p, user) {
     image_count: counts.images || 0, video_count: counts.videos || 0,
     excerpt: p.description.length > 160 ? p.description.slice(0, 160).trimEnd() + '…' : p.description,
     unlock_fee: fee, locked: !full, can_manage: manage, inspection_fee: inspectionFee(p),
+    views: manage ? viewCount(p.id) : undefined,
   };
   if (full) {
     const owner = db.prepare('SELECT name, role FROM users WHERE id = ?').get(p.owner_id);
@@ -160,7 +164,7 @@ function present(p, user) {
       description: p.description, address: p.address, features: p.features, title_doc: p.title_doc,
       contact_phone: p.contact_phone, map_url: p.map_url, distance_km: p.distance_km, lat: p.lat, lng: p.lng, tour_url: p.tour_url,
       listed_by: owner ? owner.name || (owner.role === 'admin' ? config.COMPANY : 'Agent') : '',
-      media: db.prepare('SELECT * FROM media WHERE property_id = ? ORDER BY id').all(p.id).map((m) => ({
+      media: db.prepare('SELECT * FROM media WHERE property_id = ? ORDER BY sort_order, id').all(p.id).map((m) => ({
         id: m.id, kind: m.kind, status: m.status, url: mediaUrl(m.file), thumb: mediaUrl(m.thumb),
         is_cover: m.id === p.cover_media_id,
         ...(manage ? { bytes: m.bytes, orig_bytes: m.orig_bytes } : {}),
@@ -264,8 +268,48 @@ function removeProperty(p) {
   })();
 }
 
+// ---- studio: photo order, views, Google Maps pins ----
+addColumn('media', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
+db.exec(`CREATE TRIGGER IF NOT EXISTS media_sort AFTER INSERT ON media BEGIN
+  UPDATE media SET sort_order = (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM media WHERE property_id = NEW.property_id AND id != NEW.id) WHERE id = NEW.id;
+END`);
+db.exec(`CREATE TABLE IF NOT EXISTS views (
+  property_id INTEGER NOT NULL, viewer TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (property_id, viewer, day))`);
+
+/** Latitude and longitude from a Google Maps link (or typed as "lat,lng"). Null when none is found. */
+function coordsFromLink(text) {
+  let s = String(text || '');
+  try { s = decodeURIComponent(s); } catch { /* use as typed */ }
+  const m = s.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/) || s.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)
+    || s.match(/[?&](?:q|ll|query|center)=(-?\d+\.\d+)[,\s](-?\d+\.\d+)/i)
+    || s.match(/^\s*(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)\s*$/);
+  if (!m) return null;
+  const lat = Number(m[1]), lng = Number(m[2]);
+  return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null;
+}
+
+const viewCount = (pid) => db.prepare('SELECT COALESCE(SUM(n), 0) AS n FROM views WHERE property_id = ?').get(pid).n;
+
+/** Count a view once per viewer per day. A signed-in buyer or agent's first view of the day is also sent to the owner. */
+function recordView(p, user, ip) {
+  try {
+    if (!['active', 'sold'].includes(p.status) || (user && user.id === p.owner_id)) return;
+    const viewer = user ? `u${user.id}` : `ip${require('crypto').createHash('sha256').update(String(ip || '')).digest('hex').slice(0, 16)}`;
+    const day = new Date().toISOString().slice(0, 10);
+    const seen = db.prepare('SELECT 1 FROM views WHERE property_id = ? AND viewer = ? AND day = ?').get(p.id, viewer, day);
+    db.prepare('INSERT INTO views(property_id, viewer, day, n) VALUES(?,?,?,1) ON CONFLICT(property_id, viewer, day) DO UPDATE SET n = n + 1').run(p.id, viewer, day);
+    if (!seen && user) {
+      const who = ['agent', 'admin'].includes(user.role) ? `Agent ${user.company || user.name || 'a member'}` : 'A buyer';
+      db.prepare('INSERT INTO notifications(user_id, title, body, url) VALUES(?,?,?,?)').run(p.owner_id, 'Listing viewed', `${who} viewed ${p.title}`, `/p/${p.id}`);
+    }
+  } catch (e) {
+    console.error('view not recorded:', e.message);
+  }
+}
+
 module.exports = {
-  hooks, inspectionFee, landDistanceKm, PURPOSES, TYPES, int, str, naira, place, propertyUrl,
+  hooks, inspectionFee, landDistanceKm, coordsFromLink, viewCount, recordView, PURPOSES, TYPES, int, str, naira, place, propertyUrl,
   createProperty, updateProperty, getProperty, mustGet, canManage, unlockFee, hasUnlocked,
   present, search, publish, submit, markSold, removeProperty,
 };
