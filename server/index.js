@@ -125,6 +125,32 @@ api.post('/auth/login', auth.rateLimit('login', 30, 15 * 60 * 1000), (req, res) 
   res.json({ user: publicUser(u) });
 });
 
+// Password reset: a code goes to the member's confirmed email. Admins can also reset from the server (setpassword.js).
+api.post('/auth/reset-request', auth.rateLimit('reset', 8, 60 * 60 * 1000), async (req, res) => {
+  const phone = auth.normalizePhone(req.body.phone);
+  const u = phone ? db.prepare('SELECT * FROM users WHERE phone = ?').get(phone) : null;
+  const out = { ok: true }; // the same answer whether or not the account exists
+  if (u && u.email_verified && u.email) {
+    const code = auth.createOtp(`reset:${u.id}`);
+    await mail.send(u.email, `${code} is your ${config.SITE_NAME} reset code`, `Your password reset code is ${code}. It expires in 10 minutes. If you did not ask for this, ignore this email.`);
+    if (!mail.LIVE && !config.PRODUCTION) out.demo_code = code; // demo mode only
+  }
+  res.json(out);
+});
+
+api.post('/auth/reset-confirm', auth.rateLimit('reset-confirm', 20, 15 * 60 * 1000), (req, res) => {
+  const phone = auth.normalizePhone(req.body.phone);
+  const u = phone ? db.prepare('SELECT * FROM users WHERE phone = ?').get(phone) : null;
+  if (!u) throw new HttpError(400, 'That code is not valid. Request a new one.');
+  const password = String(req.body.password || '');
+  if (password.length < 8) throw new HttpError(400, 'Choose a password of at least 8 characters.');
+  auth.checkOtp(`reset:${u.id}`, req.body.code);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(auth.hashPassword(password), u.id);
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(u.id); // sign out everywhere
+  audit(u.id, 'password reset');
+  res.json({ ok: true });
+});
+
 api.post('/auth/logout', (req, res) => {
   auth.destroySession(req, res);
   res.json({ ok: true });

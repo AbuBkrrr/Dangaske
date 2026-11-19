@@ -67,7 +67,12 @@
     const m = modal(`<div class="tabs" style="margin-top:0"><button class="on" data-t="in">Sign in</button><button data-t="up">Create account</button></div>
       <form id="fin" class="grid"><div><label for="lph">Phone number</label><input id="lph" name="phone" type="tel" inputmode="tel" autocomplete="tel" required></div>
         <div><label for="lpw">Password</label><input id="lpw" name="password" type="password" autocomplete="current-password" required></div>
-        <button class="btn block">Sign in</button></form>
+        <button class="btn block">Sign in</button>
+        <p class="small" style="margin:6px 0 0"><a href="#" id="forgot">Forgot password?</a></p></form>
+      <form id="frs" class="grid" hidden><p class="small muted" style="margin:0">Enter your phone number. If it has a confirmed email address, we will send a reset code to it.</p>
+        <div><label for="rp">Phone number</label><input id="rp" name="phone" type="tel" inputmode="tel" required></div><button class="btn block" id="rsend">Send reset code</button>
+        <div id="rstep2" hidden><div><label for="rc">6-digit code</label><input id="rc" name="code" inputmode="numeric" maxlength="6"></div><div><label for="rnp">New password <span class="small muted">(at least 8 characters)</span></label><input id="rnp" name="password" type="password" minlength="8" autocomplete="new-password"></div><button class="btn block gold">Set new password</button></div>
+        <p class="small"><a href="#" id="backin">← Back to sign in</a></p></form>
       <form id="fup" class="grid" hidden><div><label for="un">Full name</label><input id="un" name="name" autocomplete="name" required maxlength="80"></div>
         <div><label for="up">Phone number</label><input id="up" name="phone" type="tel" inputmode="tel" autocomplete="tel" required></div>
         <div><label for="ur">I am a</label><select id="ur" name="role">${[['buyer', 'Buyer / tenant / investor'], ['agent', 'Agent / property owner'], ['agency', 'Real estate agency'], ['developer', 'Developer'], ['service', 'Service provider (lawyer, surveyor…)']].map(([v, t]) => `<option value="${v}"${v === (DG.presetRole || 'buyer') ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
@@ -83,6 +88,29 @@
     $('#fin', m).addEventListener('submit', (ev) => {
       ev.preventDefault();
       busy($('button', ev.target), async () => { finish((await api('/auth/login', { method: 'POST', body: formData(ev.target) })).user); });
+    });
+    const showReset = (on) => { $('#fin', m).hidden = on; $('#fup', m).hidden = true; $('#frs', m).hidden = !on; m.querySelectorAll('[data-t]').forEach((x) => x.classList.toggle('on', false)); };
+    $('#forgot', m).addEventListener('click', (ev) => { ev.preventDefault(); showReset(true); });
+    $('#backin', m).addEventListener('click', (ev) => { ev.preventDefault(); showReset(false); m.querySelector('[data-t=in]').classList.add('on'); });
+    let resetPhone = '';
+    $('#frs', m).addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const f = formData(ev.target);
+      if (!$('#rstep2', m).hidden) {
+        busy($('button.gold', m), async () => {
+          await api('/auth/reset-confirm', { method: 'POST', body: { phone: resetPhone, code: f.code, password: f.password } });
+          toast('Password changed. Sign in with your new password.');
+          $('#frs', m).hidden = true; $('#fin', m).hidden = false; $('#lph', m).value = resetPhone;
+        });
+        return;
+      }
+      resetPhone = f.phone;
+      busy($('#rsend', m), async () => {
+        const r = await api('/auth/reset-request', { method: 'POST', body: { phone: f.phone } });
+        $('#rstep2', m).hidden = false; $('#rsend', m).hidden = true;
+        toast(r.demo_code ? `Demo mode: your code is ${r.demo_code}` : 'If a confirmed email is on this account, the code is on its way.');
+        if (r.demo_code) $('#rc', m).value = r.demo_code;
+      });
     });
     $('#fup', m).addEventListener('submit', (ev) => {
       ev.preventDefault();

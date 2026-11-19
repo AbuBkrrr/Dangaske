@@ -676,3 +676,17 @@ test('password sign-in replaces WhatsApp codes; admin verifies agents', async ()
   assert.equal((await anon('GET', `/api/properties/${made.body.id}`)).body.status, 'active');
   assert.equal((await admin('POST', '/api/admin/users/999999/verify', {})).status, 404);
 });
+
+test('password reset by emailed code', async () => {
+  const phone = '08077779999';
+  await login(client(), phone, { name: 'Reset Person' });
+  db.prepare("UPDATE users SET email = 'reset@example.com', email_verified = 1 WHERE phone = '2348077779999'").run();
+  const req = await anon('POST', '/api/auth/reset-request', { phone });
+  assert.equal(req.status, 200);
+  assert.ok(req.body.demo_code, 'demo mode returns the code');
+  assert.equal((await anon('POST', '/api/auth/reset-confirm', { phone, code: '000000', password: 'brand-new-pass' })).status, 400);
+  assert.equal((await anon('POST', '/api/auth/reset-confirm', { phone, code: req.body.demo_code, password: 'brand-new-pass' })).status, 200);
+  assert.equal((await anon('POST', '/api/auth/login', { phone, password: 'test-password-1' })).status, 400); // old password refused
+  assert.equal((await anon('POST', '/api/auth/login', { phone, password: 'brand-new-pass' })).status, 200);
+  assert.equal((await anon('POST', '/api/auth/reset-request', { phone: '08000000000' })).status, 200); // unknown numbers get the same answer
+});
