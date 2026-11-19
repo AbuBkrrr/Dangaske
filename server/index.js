@@ -93,6 +93,38 @@ api.post('/auth/verify', auth.rateLimit('verify', 20, 15 * 60 * 1000), (req, res
   res.json({ user: publicUser(user) });
 });
 
+// Sign up with a phone number and password. Agents can post at once; their listings go live when an admin verifies them.
+api.post('/auth/register', auth.rateLimit('register', 25, 15 * 60 * 1000), (req, res) => {
+  const phone = auth.normalizePhone(req.body.phone);
+  if (!phone) throw new HttpError(400, 'Enter a valid phone number.');
+  const password = String(req.body.password || '');
+  if (password.length < 8) throw new HttpError(400, 'Choose a password of at least 8 characters.');
+  const name = String(req.body.name || '').trim().slice(0, 80);
+  if (name.length < 2) throw new HttpError(400, 'Enter your full name.');
+  if (db.prepare('SELECT 1 FROM users WHERE phone = ?').get(phone)) throw new HttpError(409, 'This number already has an account. Sign in instead.');
+  const email = String(req.body.email || '').trim().toLowerCase();
+  if (email && !mail.valid(email)) throw new HttpError(400, 'Enter a valid email address, or leave it empty.');
+  const role = ['buyer', 'agent', 'agency', 'developer', 'service'].includes(req.body.role) ? req.body.role : 'buyer';
+  const pro = role !== 'buyer';
+  const user = auth.upsertUser(phone, { name, role: pro ? 'agent' : 'buyer' });
+  db.prepare('UPDATE users SET password_hash = ?, account_type = ?, email = ?, email_verified = 0 WHERE id = ?')
+    .run(auth.hashPassword(password), pro ? role : 'individual', email, user.id);
+  experience.applyReferral(user, req.body.ref);
+  auth.createSession(res, user.id);
+  audit(user.id, 'signup');
+  res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id)) });
+});
+
+api.post('/auth/login', auth.rateLimit('login', 30, 15 * 60 * 1000), (req, res) => {
+  const phone = auth.normalizePhone(req.body.phone);
+  const u = phone ? db.prepare('SELECT * FROM users WHERE phone = ?').get(phone) : null;
+  if (!u || !auth.checkPassword(req.body.password, u.password_hash)) throw new HttpError(400, 'Wrong phone number or password.');
+  if (u.suspended) throw new HttpError(403, 'This account is suspended. Please contact support.');
+  auth.createSession(res, u.id);
+  audit(u.id, 'login');
+  res.json({ user: publicUser(u) });
+});
+
 api.post('/auth/logout', (req, res) => {
   auth.destroySession(req, res);
   res.json({ ok: true });

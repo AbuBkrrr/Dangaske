@@ -229,6 +229,8 @@ addColumn('properties', 'distance_km', 'REAL');
 addColumn('payments', 'claimed_at', 'TEXT');
 addColumn('payments', 'proof', "TEXT NOT NULL DEFAULT ''");
 addColumn('payments', 'sender', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'password_hash', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'phone_verified', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'kyc_data', "TEXT NOT NULL DEFAULT '{}'");
 addColumn('users', 'kyc_files', "TEXT NOT NULL DEFAULT '{}'");
 addColumn('users', 'email', "TEXT NOT NULL DEFAULT ''");

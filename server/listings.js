@@ -237,7 +237,7 @@ function publish(p) {
 /** Owner submits a draft. Admin listings go live at once; agent listings wait for approval. */
 function submit(p, user) {
   if (!['draft', 'rejected'].includes(p.status)) return p;
-  if (user.role === 'admin') return publish(p);
+  if (user.role === 'admin' || user.verified) return publish(p); // unverified agents wait for an admin
   db.prepare("UPDATE properties SET status = 'pending' WHERE id = ?").run(p.id);
   push.notifyAdmins({ title: 'Listing awaiting approval', body: p.title, url: '/admin' });
   return getProperty(p.id);
@@ -308,7 +308,15 @@ function recordView(p, user, ip) {
   }
 }
 
+/** Publish every listing an agent has waiting; called when an admin verifies the account. */
+function publishPendingFor(ownerId) {
+  const rows = db.prepare("SELECT * FROM properties WHERE owner_id = ? AND status = 'pending'").all(ownerId);
+  for (const p of rows) publish(p);
+  return rows.length;
+}
+
 module.exports = {
+  publishPendingFor,
   hooks, inspectionFee, landDistanceKm, coordsFromLink, viewCount, recordView, PURPOSES, TYPES, int, str, naira, place, propertyUrl,
   createProperty, updateProperty, getProperty, mustGet, canManage, unlockFee, hasUnlocked,
   present, search, publish, submit, markSold, removeProperty,

@@ -144,6 +144,7 @@ module.exports = ({ publicUser }) => {
     if (!u) throw new HttpError(404, 'Member not found.');
     const ok = req.body.approve === true;
     db.prepare('UPDATE users SET kyc_status = ?, verified = ?, kyc_note = ? WHERE id = ?').run(ok ? 'approved' : 'rejected', ok ? 1 : 0, str(req.body.note, 200), u.id);
+    if (ok) listings.publishPendingFor(u.id);
     push.notify({
       userId: u.id, url: '/dashboard',
       title: ok ? 'You are verified' : 'Verification not approved',
@@ -153,6 +154,17 @@ module.exports = ({ publicUser }) => {
   });
 
   // Rapid suspension: signs the member out everywhere and hides their listings.
+  // Admin confirms the agent's WhatsApp number and account: verified agents' waiting listings go live.
+  r.post('/admin/users/:id/verify', requireRole('admin'), (req, res) => {
+    const u = db.prepare('SELECT * FROM users WHERE id = ?').get(Number(req.params.id) || 0);
+    if (!u) throw new HttpError(404, 'Member not found.');
+    const on = req.body.verify !== false ? 1 : 0;
+    db.prepare('UPDATE users SET phone_verified = ?, verified = ? WHERE id = ?').run(on, on, u.id);
+    const published = on ? listings.publishPendingFor(u.id) : 0;
+    if (on) push.notify({ userId: u.id, title: 'Account verified', body: published ? `You are verified. ${published} listing(s) are now live.` : 'You are verified. Your listings now go live straight away.', url: '/studio' });
+    res.json({ ok: true, published });
+  });
+
   r.post('/admin/users/:id/suspend', requireRole('admin'), (req, res) => {
     const id = Number(req.params.id) || 0;
     if (id === req.user.id) throw new HttpError(400, 'You cannot suspend yourself.');

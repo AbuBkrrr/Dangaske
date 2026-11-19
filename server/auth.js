@@ -113,7 +113,8 @@ function destroySession(req, res) {
 const requireAuth = (req, _res, next) => (req.user ? next() : next(new HttpError(401, 'Please sign in first.')));
 /** Agents, agencies, developers and service providers must pass KYC before they can post or manage listings. */
 const KYC_MESSAGE = 'Complete identity verification (KYC) to post and manage listings.';
-const needKyc = (user) => (user.role === 'agent' && !user.verified ? new HttpError(403, KYC_MESSAGE, 'kyc_required') : null);
+// Posting is open to agents before verification; their listings wait for an admin instead (see submit in listings.js).
+const needKyc = () => null;
 const requireVerifiedPro = (req, _res, next) => {
   if (!req.user) return next(new HttpError(401, 'Please sign in first.'));
   if (req.user.role === 'admin') return next();
@@ -141,7 +142,19 @@ function rateLimit(bucket, max, windowMs) {
 }
 setInterval(() => hits.clear(), 60 * 60 * 1000).unref();
 
+function hashPassword(pw) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  return `${salt}:${crypto.scryptSync(String(pw), salt, 64).toString('hex')}`;
+}
+function checkPassword(pw, stored) {
+  if (!stored || !String(stored).includes(':')) return false;
+  const [salt, hash] = String(stored).split(':');
+  const given = crypto.scryptSync(String(pw || ''), salt, 64);
+  return given.length === hash.length / 2 && crypto.timingSafeEqual(given, Buffer.from(hash, 'hex'));
+}
+
 module.exports = {
+  hashPassword, checkPassword,
   HttpError, normalizePhone, createOtp, checkOtp, upsertUser, createSession, destroySession,
   loadUser, requireAuth, requireRole, requireVerifiedPro, needKyc, rateLimit,
 };

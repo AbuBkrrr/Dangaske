@@ -275,10 +275,6 @@ async function handleMessage(msg) {
     return;
   }
 
-  if (user.role === 'agent' && !user.verified) {
-    await sendText(phone, `Please complete your identity verification (KYC) on ${config.BASE_URL}/kyc first. After approval you can post by WhatsApp.`);
-    return;
-  }
   let reply;
   try {
     if (msg.type === 'text') reply = handleText(user, msg.text.body);

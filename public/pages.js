@@ -403,9 +403,11 @@
     <td>${u.id === S.user.id ? '' : `<button class="btn sm ${u.suspended ? '' : 'danger'}" data-sus="${u.id}" data-v="${u.suspended ? 0 : 1}">${u.suspended ? 'Reinstate' : 'Suspend'}</button>`}</td></tr>`).join('')}</table></div>`;
   DG.adminTabs.verify = async (d) => {
     const q = d.users.filter((u) => u.kyc_status === 'pending');
+    const waiting = d.users.filter((u) => u.role === 'agent' && !u.verified);
     const parse = (x) => { try { return JSON.parse(x || '{}'); } catch { return {}; } };
     const L = { full_name: 'Name', dob: 'Date of birth', gender: 'Gender', nationality: 'Nationality', occupation: 'Occupation', address: 'Address', source_of_funds: 'Source of funds', id_type: 'ID type', id_number: 'ID number', bvn: 'BVN', business_name: 'Business', rc_number: 'RC number' };
-    return `<h3>Identity checks awaiting review (${q.length})</h3>${q.map((u) => { const k = parse(u.kyc_data), f = parse(u.kyc_files); return `<div class="card" style="margin-bottom:12px"><div class="spread"><b>${e(u.company || u.name || '—')} <span class="small muted notranslate">+${e(u.phone)} · ${e(TYPE[u.account_type] || '')}</span></b>
+    const agentsHtml = waiting.length ? `<h3>Agents awaiting verification (${waiting.length})</h3><p class="small muted">Confirm the number belongs to the agent (call or message it on WhatsApp), then verify. Their waiting listings go live.</p><div class="tablewrap"><table><tr><th>Agent</th><th>Phone</th><th>Type</th><th></th></tr>${waiting.map((u) => `<tr><td>${e(u.company || u.name || '—')}</td><td class="notranslate">+${e(u.phone)}</td><td>${e(TYPE[u.account_type] || '')}</td><td><button class="btn sm gold" data-vagent="${u.id}">Verify agent</button></td></tr>`).join('')}</table></div>` : '<p class="muted small">No agents waiting for verification.</p>';
+    return `${agentsHtml}<h3>Identity checks awaiting review (${q.length})</h3>${q.map((u) => { const k = parse(u.kyc_data), f = parse(u.kyc_files); return `<div class="card" style="margin-bottom:12px"><div class="spread"><b>${e(u.company || u.name || '—')} <span class="small muted notranslate">+${e(u.phone)} · ${e(TYPE[u.account_type] || '')}</span></b>
       <span class="row"><button class="btn sm" data-kyc="${u.id}" data-ok="1">Approve</button><button class="btn sm ghost" data-kyc="${u.id}" data-ok="0">Reject</button></span></div>
       <table style="margin-top:8px">${Object.keys(L).filter((x) => k[x]).map((x) => `<tr><td class="small muted" style="width:170px">${L[x]}</td><td class="notranslate">${e(k[x])}</td></tr>`).join('')}</table>
       <p class="row" style="margin-top:8px">${Object.keys(f).map((x) => `<a class="btn sm ghost" href="/api/admin/kyc/${u.id}/file?doc=${x}" target="_blank" rel="noopener">${KYC_DOCS[x] || x} ↗</a>`).join('')}</p></div>`; }).join('') || '<p class="muted">Nothing waiting.</p>'}
@@ -451,6 +453,7 @@
     const post = (sel, attr, fn) => app.querySelectorAll(sel).forEach((b) => b.addEventListener('click', () => busy(b, async () => { await fn(b, b.getAttribute(attr)); render(); })));
     post('[data-tconf]', 'data-tconf', (_b, id) => (confirm('Confirm that this money has arrived in the bank account?') ? api(`/admin/transfers/${id}/confirm`, { method: 'POST' }) : null));
     post('[data-trej]', 'data-trej', (_b, id) => { const reason = prompt('Note to the member (optional):'); return reason === null ? null : api(`/admin/transfers/${id}/reject`, { method: 'POST', body: { reason } }); });
+    post('[data-vagent]', 'data-vagent', (_b, id) => api(`/admin/users/${id}/verify`, { method: 'POST', body: {} }));
     post('[data-sus]', 'data-sus', (b, id) => api(`/admin/users/${id}/suspend`, { method: 'POST', body: { suspended: b.dataset.v === '1' } }));
     post('[data-res]', 'data-res', (_b, id) => api(`/admin/reports/${id}/resolve`, { method: 'POST' }));
     post('[data-delpost]', 'data-delpost', (_b, id) => (confirm('Delete this article?') ? api(`/admin/posts/${id}`, { method: 'DELETE' }) : null));

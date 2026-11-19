@@ -275,7 +275,8 @@
   route(/^\/studio$/, async (_m, q) => {
     if (!S.user) { DG.openLogin(); app.innerHTML = '<p class="pad center muted">Sign in to open your studio.</p>'; return; }
     if (!['agent', 'admin'].includes(S.user.role)) { app.innerHTML = '<div class="pad center"><h2>The studio is for agents and developers</h2><p class="muted">Buyers can <a href="/request" data-link>request a property</a> or browse listings.</p></div>'; return; }
-    if (S.user.role === 'agent' && !S.user.verified) { app.innerHTML = `<div class="pad center"><h2>Verify your identity first</h2><p class="muted">${S.user.kyc_status === 'pending' ? 'Your documents are under review.' : 'Complete identity verification (KYC) to open your studio and post listings.'}</p><a class="btn gold" href="/kyc" data-link>${S.user.kyc_status === 'pending' ? 'View status' : 'Complete KYC'}</a></div>`; return; }
+    const awaiting = S.user.role === 'agent' && !S.user.verified;
+    if (false) { app.innerHTML = `<div class="pad center"><h2>Verify your identity first</h2><p class="muted">${S.user.kyc_status === 'pending' ? 'Your documents are under review.' : 'Complete identity verification (KYC) to open your studio and post listings.'}</p><a class="btn gold" href="/kyc" data-link>${S.user.kyc_status === 'pending' ? 'View status' : 'Complete KYC'}</a></div>`; return; }
     const tab = q.get('tab') || 'listings';
     const [mine, notes] = await Promise.all([api('/my/properties'), api('/notifications')]);
     const count = (s) => mine.filter((p) => p.status === s).length;
@@ -291,7 +292,7 @@
     const body = tab === 'activity'
       ? `<p class="small muted">New listings, sales and views of your listings.</p>${feed}`
       : (mine.length ? mine.map(card).join('') : '<p class="muted">No listings yet. Add one, or send photos and details from WhatsApp.</p>');
-    app.innerHTML = `<h1 style="margin-top:28px">My studio</h1>
+    app.innerHTML = `<h1 style="margin-top:28px">My studio</h1>${awaiting ? '<div class="demo">Your account is awaiting admin verification. Listings you submit go live as soon as an admin verifies your account.</div>' : ''}
       <p class="muted">Welcome${S.user.name ? ', ' + e(S.user.name) : ''}. List properties, track views and see what is happening.</p>
       <div class="stats" style="margin:14px 0">${stat(count('active'), 'live')}${stat(count('draft'), 'drafts')}${stat(count('pending'), 'awaiting approval')}${stat(views, 'views')}</div>
       <div class="grid g2" style="margin-bottom:16px">

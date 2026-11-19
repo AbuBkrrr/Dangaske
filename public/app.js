@@ -47,7 +47,7 @@
   const go = (url) => { history.pushState(null, '', url); render(); };
   const needLogin = (then) => { if (S.user) return false; openLogin(then); return true; };
 
-  // ---------- modal + sign in (phone number, code delivered on WhatsApp) ----------
+  // ---------- modal + sign in (phone number and password) ----------
   function modal(html) {
     const m = $('#modal');
     m.innerHTML = `<div class="box" role="dialog" aria-modal="true"><button class="x" data-close aria-label="Close">×</button>${html}</div>`;
@@ -59,40 +59,37 @@
   $('#modal').addEventListener('click', (ev) => { if (ev.target.id === 'modal' || ev.target.closest('[data-close]')) closeModal(); });
 
   function openLogin(then) {
-    const m = modal(`<h2>Sign in or join</h2>
-      <p class="muted">Enter your WhatsApp number. We will send a verification code to it on WhatsApp.</p>
-      <form id="f1"><label for="ph">WhatsApp phone number</label>
-        <input id="ph" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="0803 123 4567" required>
-        <p><button class="btn block">Send code on WhatsApp</button></p></form>`);
-    $('#f1', m).addEventListener('submit', (ev) => {
+    const finish = (user) => {
+      S.user = user; closeModal(); toast(`Welcome${user.name ? ', ' + user.name : ''}!`);
+      refreshNotifs().then(renderUser);
+      if (typeof then === 'function') then(); else render();
+    };
+    const m = modal(`<div class="tabs" style="margin-top:0"><button class="on" data-t="in">Sign in</button><button data-t="up">Create account</button></div>
+      <form id="fin" class="grid"><div><label for="lph">Phone number</label><input id="lph" name="phone" type="tel" inputmode="tel" autocomplete="tel" required></div>
+        <div><label for="lpw">Password</label><input id="lpw" name="password" type="password" autocomplete="current-password" required></div>
+        <button class="btn block">Sign in</button></form>
+      <form id="fup" class="grid" hidden><div><label for="un">Full name</label><input id="un" name="name" autocomplete="name" required maxlength="80"></div>
+        <div><label for="up">Phone number</label><input id="up" name="phone" type="tel" inputmode="tel" autocomplete="tel" required></div>
+        <div><label for="ur">I am a</label><select id="ur" name="role">${[['buyer', 'Buyer / tenant / investor'], ['agent', 'Agent / property owner'], ['agency', 'Real estate agency'], ['developer', 'Developer'], ['service', 'Service provider (lawyer, surveyor…)']].map(([v, t]) => `<option value="${v}"${v === (DG.presetRole || 'buyer') ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
+        <div><label for="ue">Email <span class="small muted">(optional, for receipts and alerts)</span></label><input id="ue" name="email" type="email" autocomplete="email" maxlength="200"></div>
+        <div><label for="uw">Password <span class="small muted">(at least 8 characters)</span></label><input id="uw" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
+        <button class="btn block">Create account</button>
+        <p class="small muted">Agents, agencies, developers and service providers can post right away. Each listing goes live once our team verifies the account.</p></form>`);
+    m.querySelectorAll('[data-t]').forEach((b) => b.addEventListener('click', () => {
+      const up = b.dataset.t === 'up';
+      m.querySelectorAll('[data-t]').forEach((x) => x.classList.toggle('on', x === b));
+      $('#fin', m).hidden = up; $('#fup', m).hidden = !up;
+    }));
+    $('#fin', m).addEventListener('submit', (ev) => {
       ev.preventDefault();
-      busy($('button.btn', ev.target), async () => {
-        const r = await api('/auth/request-otp', { method: 'POST', body: formData(ev.target) });
-        codeStep(r, then);
-      });
+      busy($('button', ev.target), async () => { finish((await api('/auth/login', { method: 'POST', body: formData(ev.target) })).user); });
     });
-  }
-
-  function codeStep(r, then) {
-    const m = modal(`<h2>Enter your code</h2>
-      <p class="muted">We sent a 6-digit code on WhatsApp to <b class="notranslate">+${e(r.phone)}</b>${(r.channels || []).includes('email') ? ' and to your email address' : ''}.</p>
-      ${r.demo_code ? `<div class="demo">Demo mode — WhatsApp is not connected yet. Your code is <b class="notranslate">${e(r.demo_code)}</b></div>` : ''}
-      <form id="f2" class="grid">
-        <div><label for="cd">Verification code</label><input id="cd" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required value="${e(r.demo_code || '')}"></div>
-        ${r.is_new ? `<div><label for="nm">Your name</label><input id="nm" name="name" autocomplete="name" required maxlength="80"></div>
-        <div><label for="em">Email <span class="small muted">(optional — for receipts and alerts)</span></label><input id="em" name="email" type="email" autocomplete="email" maxlength="200"></div>
-        <div><label for="rl">I am a</label><select id="rl" name="role">${[['buyer', 'Buyer / tenant / investor'], ['agent', 'Agent / property owner'], ['agency', 'Real estate agency'], ['developer', 'Developer'], ['service', 'Service provider (lawyer, surveyor…)']].map(([v, t]) => `<option value="${v}"${v === (DG.presetRole || 'buyer') ? ' selected' : ''}>${t}</option>`).join('')}</select><p class="small muted" style="margin:4px 0 0">Agents, agencies, developers and service providers complete identity verification (KYC) before they can post.</p></div>` : ''}
-        <button class="btn block">Verify and continue</button></form>`);
-    $('#f2', m).addEventListener('submit', (ev) => {
+    $('#fup', m).addEventListener('submit', (ev) => {
       ev.preventDefault();
-      busy($('button.btn', ev.target), async () => {
-        const out = await api('/auth/verify', { method: 'POST', body: { phone: r.phone, ref: DG.ref ? DG.ref() : '', ...formData(ev.target) } });
-        S.user = out.user; closeModal(); toast(`Welcome${S.user.name ? ', ' + S.user.name : ''}!`);
-        const em = (formData(ev.target).email || '').trim();
-        if (em) api('/me/email', { method: 'POST', body: { email: em } }).then((x) => { S.user = x.user; toast('We emailed you a code — confirm your email in your dashboard.'); }).catch(() => {});
-        await refreshNotifs(); renderUser();
-        if (r.is_new) offerPush();
-        if (r.is_new && out.user.role === 'agent') go('/kyc'); else if (typeof then === 'function') then(); else render();
+      busy($('button', ev.target), async () => {
+        const body = { ...formData(ev.target), ref: DG.ref ? DG.ref() : '' };
+        finish((await api('/auth/register', { method: 'POST', body })).user);
+        if (['agent', 'agency', 'developer', 'service'].includes(body.role)) go('/studio');
       });
     });
   }
@@ -276,7 +273,6 @@
   // post / edit listing
   async function postPage(q) {
     if (needLogin()) return (app.innerHTML = '<p class="pad center muted">Sign in to post a property.</p>');
-    if (S.user.role === 'agent' && !S.user.verified) return (app.innerHTML = `<div class="pad center"><h2>Verify your identity first</h2><p class="muted">${S.user.kyc_status === 'pending' ? 'Your documents are under review. You can post as soon as you are approved.' : 'Agents, agencies and developers must complete identity verification (KYC) before posting.'}</p><a class="btn gold" href="/kyc" data-link>${S.user.kyc_status === 'pending' ? 'View my verification' : 'Complete KYC'}</a></div>`);
     if (!['agent', 'admin'].includes(S.user.role)) return (app.innerHTML = '<div class="pad center"><h2>Agents only</h2><p class="muted">Posting is for registered agents. Contact us to upgrade your account, or send a <a href="/request" data-link>property request</a>.</p></div>');
     const id = q.get('id');
     let p = id ? await api('/properties/' + id) : null;

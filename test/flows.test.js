@@ -32,11 +32,15 @@ const client = () => {
   };
 };
 async function login(c, phone, extra = {}) {
-  const r = await c('POST', '/api/auth/request-otp', { phone });
+  const pw = 'test-password-1';
+  const r = await c('POST', '/api/auth/register', { phone, password: pw, name: extra.name || 'Test User', role: extra.role || 'buyer', ref: extra.ref });
+  if (r.status === 409) {
+    const l = await c('POST', '/api/auth/login', { phone, password: pw });
+    assert.equal(l.status, 200, JSON.stringify(l.body));
+    return l.body.user;
+  }
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  const v = await c('POST', '/api/auth/verify', { phone, code: r.body.demo_code, ...extra });
-  assert.equal(v.status, 200, JSON.stringify(v.body));
-  return v.body.user;
+  return r.body.user;
 }
 const png = (w, h) => sharp({ create: { width: w, height: h, channels: 3, background: { r: 30, g: 120, b: 90 }, noise: { type: 'gaussian', mean: 128, sigma: 40 } } }).png().toBuffer();
 
@@ -55,7 +59,7 @@ const admin = client(), buyer = client(), agent = client(), anon = client();
 let propId;
 
 test('phone sign-up with WhatsApp code', async () => {
-  const bad = await anon('POST', '/api/auth/verify', { phone: '08022222222', code: '000000' });
+  const bad = await anon('POST', '/api/auth/login', { phone: '08022222222', password: 'wrong-password' });
   assert.equal(bad.status, 400);
   assert.equal((await login(admin, '08011111111', { name: 'Boss' })).role, 'admin');
   const b = await login(buyer, '0802 222 2222', { name: 'Bala', role: 'admin' });
@@ -63,8 +67,6 @@ test('phone sign-up with WhatsApp code', async () => {
   assert.equal(b.phone, '2348022222222');
   assert.equal((await login(agent, '+2348033333333', { name: 'Ada', role: 'agent' })).role, 'agent');
   db.prepare("UPDATE users SET verified = 1, kyc_status = 'approved' WHERE phone = '2348033333333'").run(); // verification itself is tested below
-  assert.equal((await anon('POST', '/api/auth/request-otp', { phone: '08044444444' })).status, 200);
-  assert.equal((await anon('POST', '/api/auth/request-otp', { phone: '08044444444' })).status, 429); // resend cooldown
 });
 
 test('listing, automatic compression, publish + notifications', async () => {
@@ -121,7 +123,7 @@ test('easy-buy plan and instalments', async () => {
 
 test('agent listing needs approval; property requests', async () => {
   const p = await agent('POST', '/api/properties', { title: 'Agent land', price: 5000000, type: 'land', state: 'Kano' });
-  assert.equal((await agent('POST', `/api/properties/${p.body.id}/submit`)).body.status, 'pending');
+  assert.equal((await agent('POST', `/api/properties/${p.body.id}/submit`)).body.status, 'active'); // verified agents publish at once
   assert.equal((await agent('PATCH', `/api/properties/${propId}`, { price: 1 })).status, 403);
   const req = await buyer('POST', '/api/requests', { purpose: 'sale', type: 'land', state: 'Kano', max_price: 6000000, details: 'Need a dry plot' });
   assert.equal(req.status, 201);
@@ -131,7 +133,9 @@ test('agent listing needs approval; property requests', async () => {
   assert.equal((await anon('GET', '/api/requests')).body[0].contact_phone, undefined);
   assert.equal((await agent('GET', '/api/requests')).body[0].contact_phone, '2348022222222');
   assert.equal((await agent('POST', `/api/admin/properties/${p.body.id}/approve`)).status, 403);
-  assert.equal((await admin('POST', `/api/admin/properties/${p.body.id}/approve`)).status, 200);
+  assert.equal((await admin('POST', `/api/admin/properties/${p.body.id}/approve`)).status, 409); // already live: verified agents publish at once
+  const late = await admin('POST', '/api/properties', { title: 'Late dry land', price: 5000000, type: 'land', state: 'Kano' });
+  await admin('POST', `/api/properties/${late.body.id}/submit`); // publishes now, after the request exists
   const n = await buyer('GET', '/api/notifications');
   assert.ok(n.body.items.some((x) => x.title === 'A property matches your request'));
 });
@@ -225,7 +229,7 @@ test('verification, flags, directory, reports, suspension, audit', async () => {
   const agentId = (await agent('GET', '/api/me')).body.user.id;
   db.prepare("UPDATE users SET verified = 0, kyc_status = 'none' WHERE id = ?").run(agentId);
   const blocked = await agent('POST', '/api/properties', { title: 'Blocked', price: 1000000 });
-  assert.deepEqual([blocked.status, blocked.body.code], [403, 'kyc_required']); // professionals cannot post before KYC
+  assert.equal(blocked.status, 201); // agents can post before verification; the listing waits
   assert.equal((await agent('PATCH', `/api/properties/${propId}`, { price: 1 })).status, 403);
   assert.equal((await agent('POST', '/api/me/kyc', null, await kycFormData({}, ['cac']))).status, 400); // agency needs the CAC certificate
   assert.equal((await agent('POST', '/api/me/kyc', null, await kycFormData({ dob: '2015-01-01' }))).status, 400); // under 18
@@ -234,7 +238,7 @@ test('verification, flags, directory, reports, suspension, audit', async () => {
   assert.equal(k.status, 200, JSON.stringify(k.body));
   assert.equal(k.body.user.kyc_status, 'pending');
   assert.equal(k.body.user.kyc_data.rc_number, '1234567');
-  assert.equal((await agent('POST', '/api/properties', { title: 'Still blocked', price: 1000000 })).status, 403); // pending is not enough
+  assert.equal((await agent('POST', '/api/properties', { title: 'Still unverified', price: 1000000 })).status, 201);
   assert.equal((await buyer('GET', `/api/admin/kyc/${agentId}/file`)).status, 403);
   assert.equal((await admin('GET', `/api/admin/kyc/${agentId}/file?doc=cac`)).status, 200);
   assert.equal((await admin('GET', `/api/admin/kyc/${agentId}/file?doc=nope`)).status, 404);
@@ -392,9 +396,6 @@ test('email alongside WhatsApp; cron endpoint', async () => {
   assert.deepEqual([set.body.user.email, set.body.user.email_verified], ['bala@example.com', false]);
   assert.equal((await buyer('POST', '/api/me/email/verify', { code: '000000' })).status, 400);
   assert.equal((await buyer('POST', '/api/me/email/verify', { code: set.body.demo_code })).body.user.email_verified, true);
-  const otp = await anon('POST', '/api/auth/request-otp', { phone: '08022222222' });
-  assert.deepEqual(otp.body.channels, ['whatsapp', 'email']); // code goes to both
-  assert.equal((await anon('POST', '/api/auth/request-otp', { phone: '08099998888' })).status, 429); // per-IP limit on code requests
   assert.equal((await anon('GET', '/api/cron?key=x')).status, 404); // disabled without CRON_KEY
   assert.equal(typeof app.start, 'function');
 });
@@ -637,7 +638,7 @@ test('studio: photo order, views, Google Maps pins, WhatsApp location, test emai
   assert.deepEqual(re.body.media.map((m) => m.id), reversed);
   assert.equal(re.body.media[0].is_cover, true); // first in the new order is the cover
 
-  assert.equal((await agent('POST', `/api/properties/${id}/submit`)).body.status, 'pending');
+  assert.equal((await agent('POST', `/api/properties/${id}/submit`)).body.status, 'active'); // verified agents publish at once
   await admin('POST', `/api/admin/properties/${id}/approve`);
   await buyer('GET', `/api/properties/${id}`);
   await buyer('GET', `/api/properties/${id}`); // same viewer, same day: counted once per view
@@ -654,4 +655,24 @@ test('studio: photo order, views, Google Maps pins, WhatsApp location, test emai
   const t = await admin('POST', '/api/admin/test-email', { to: 'owner@example.com' });
   assert.equal(t.body.ok, true);
   assert.equal(t.body.live, false); // no SMTP in tests: reported as demo, not sent
+});
+
+test('password sign-in replaces WhatsApp codes; admin verifies agents', async () => {
+  const c = client();
+  assert.equal((await c('POST', '/api/auth/register', { phone: '08066660009', password: 'short', name: 'Short Pw' })).status, 400);
+  assert.equal((await c('POST', '/api/auth/register', { phone: '08066660009', password: 'long-enough-1', name: 'Ola Trader' })).status, 200);
+  assert.equal((await c('POST', '/api/auth/register', { phone: '08066660009', password: 'long-enough-1', name: 'Dup' })).status, 409);
+  assert.equal((await c('POST', '/api/auth/login', { phone: '08066660009', password: 'nope-nope' })).status, 400);
+  assert.equal((await c('POST', '/api/auth/login', { phone: '08066660009', password: 'long-enough-1' })).status, 200);
+  const w = await client();
+  const reg = await w('POST', '/api/auth/register', { phone: '08066661111', password: 'agent-pass-1', name: 'New Agent', role: 'agent' });
+  assert.equal(reg.status, 200);
+  const made = await w('POST', '/api/properties', { title: 'Waiting listing', price: 4000000, state: 'Kano', city: 'Kano' });
+  assert.equal(made.status, 201); // posting is allowed before verification
+  assert.equal((await w('POST', `/api/properties/${made.body.id}/submit`)).body.status, 'pending'); // but waits
+  assert.equal((await anon('GET', `/api/properties/${made.body.id}`)).status, 404); // not public yet
+  const agentId = reg.body.user.id;
+  assert.equal((await admin('POST', `/api/admin/users/${agentId}/verify`, {})).body.published, 1); // admin verifies: it goes live
+  assert.equal((await anon('GET', `/api/properties/${made.body.id}`)).body.status, 'active');
+  assert.equal((await admin('POST', '/api/admin/users/999999/verify', {})).status, 404);
 });
