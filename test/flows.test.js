@@ -728,3 +728,12 @@ test('markets page lists every state, counting listings by state', async () => {
   assert.ok(m.states.find((s) => s.city === 'Kano').n >= 1);
   assert.equal(m.states.find((s) => s.city === 'Yobe').n, 0);
 });
+
+test('password login promotes a configured admin phone that was created as an agent', async () => {
+  const c = client();
+  await c('POST', '/api/auth/register', { phone: '2348011111111', password: 'test-password-1', name: 'Boss', role: 'agent' });
+  const { db: d } = require('../server/db');
+  d.prepare("UPDATE users SET role = 'agent' WHERE phone = '2348011111111'").run();
+  const r = await c('POST', '/api/auth/login', { phone: '2348011111111', password: 'test-password-1' });
+  assert.equal(r.body.user.role, 'admin');
+});

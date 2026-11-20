@@ -120,6 +120,10 @@ api.post('/auth/login', auth.rateLimit('login', 30, 15 * 60 * 1000), (req, res) 
   const u = phone ? db.prepare('SELECT * FROM users WHERE phone = ?').get(phone) : null;
   if (!u || !auth.checkPassword(req.body.password, u.password_hash)) throw new HttpError(400, 'Wrong phone number or password.');
   if (u.suspended) throw new HttpError(403, 'This account is suspended. Please contact support.');
+  if (config.ADMIN_PHONES.includes(phone) && u.role !== 'admin') {
+    db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(u.id);
+    u.role = 'admin';
+  }
   auth.createSession(res, u.id);
   audit(u.id, 'login');
   res.json({ user: publicUser(u) });
