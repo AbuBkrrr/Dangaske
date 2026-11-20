@@ -193,7 +193,7 @@ function search(q, user) {
   if (q.new_dev === '1') add('new_dev = 1');
   if (q.featured === '1') add('featured = 1');
   if (q.verified === '1') add('verified = 1');
-  if (q.city) add('city = ? COLLATE NOCASE', String(q.city));
+  if (q.city) add('(city = ? COLLATE NOCASE OR state = ? COLLATE NOCASE)', String(q.city), String(q.city));
   if (int(q.owner)) add('owner_id = ?', int(q.owner));
   if (q.available === '1') add("status = 'active'");
   const order = { price_asc: 'price ASC', price_desc: 'price DESC' }[q.sort] || "status = 'sold', featured DESC, published_at DESC, id DESC";

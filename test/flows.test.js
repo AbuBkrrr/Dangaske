@@ -713,3 +713,11 @@ test('admin reset, member reset request and change password', async () => {
   assert.equal((await anon('POST', '/api/auth/login', { phone, password: 'another-pass-1' })).status, 200);
   assert.equal((await buyer('POST', `/api/admin/users/${row.id}/reset-password`, {})).status, 403);
 });
+
+test('city market counts listings by state too', async () => {
+  const p = await admin('POST', '/api/properties', { title: 'Tarauni plot', price: 2000000, state: 'Kano', city: 'Tarauni' });
+  await admin('POST', `/api/properties/${p.body.id}/submit`);
+  const kano = (await anon('GET', '/api/markets')).body.featured.find((c) => c.city === 'Kano');
+  assert.ok(kano.n >= 1, 'Kano card counts the Tarauni listing');
+  assert.ok((await anon('GET', '/api/properties?city=Kano&limit=50')).body.items.some((x) => x.title === 'Tarauni plot'));
+});

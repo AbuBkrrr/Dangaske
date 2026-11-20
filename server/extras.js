@@ -214,14 +214,17 @@ module.exports = ({ publicUser }) => {
   });
 
   // ---------- markets ----------
+  // A listing counts towards a market when its city OR its state matches (e.g. a listing in Tarauni, Kano counts for Kano).
   r.get('/markets', (_req, res) => {
-    const rows = db
-      .prepare("SELECT city, state, COUNT(*) AS n, MIN(price) AS from_price FROM properties WHERE status = 'active' AND city != '' AND owner_id NOT IN (SELECT id FROM users WHERE suspended = 1) GROUP BY city COLLATE NOCASE ORDER BY n DESC LIMIT 60")
-      .all();
-    const by = new Map(rows.map((x) => [x.city.toLowerCase(), x]));
-    const featured = FEATURED_CITIES.map((c) => by.get(c.toLowerCase()) || { city: c, state: '', n: 0, from_price: 0 });
+    const live = db.prepare("SELECT city, state, price FROM properties WHERE status = 'active' AND owner_id NOT IN (SELECT id FROM users WHERE suspended = 1)").all();
+    const stats = (name) => {
+      const k = name.toLowerCase(), hits = live.filter((p) => p.city.toLowerCase() === k || p.state.toLowerCase() === k);
+      return { city: name, state: '', n: hits.length, from_price: hits.length ? Math.min(...hits.map((p) => p.price)) : 0 };
+    };
+    const featured = FEATURED_CITIES.map(stats);
     const names = new Set(FEATURED_CITIES.map((c) => c.toLowerCase()));
-    res.json({ featured, other: rows.filter((x) => !names.has(x.city.toLowerCase())) });
+    const others = [...new Map(live.filter((p) => p.city).map((p) => [p.city.toLowerCase(), p.city])).values()].filter((c) => !names.has(c.toLowerCase())).map(stats);
+    res.json({ featured, other: others.filter((x) => x.n > 0).sort((a, b) => b.n - a.n).slice(0, 60) });
   });
 
   // ---------- contact + trust reports ----------
