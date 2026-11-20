@@ -65,7 +65,7 @@
     </div></div>
     <section class="sec"><span class="kicker">Featured properties</span><div class="spread"><h2>Verified inventory, curated for discovery.</h2><a href="/listings?featured=1" data-link>View all properties →</a></div>${feat.items.length ? cards(feat.items, '') : '<p class="muted">Verified listings appear here as inventory is published to the marketplace.</p>'}</section>
     <section class="sec"><span class="kicker">Recently added</span><div class="spread"><h2>Newly published listings.</h2><a href="/listings" data-link>Browse marketplace →</a></div>${cards(recent.items, 'No properties yet. Check back soon.')}</section>
-    <section class="sec"><span class="kicker">Featured cities</span><div class="spread"><h2>Cross-city markets, one platform.</h2><a href="/markets" data-link>Explore markets →</a></div><div class="grid g4 keep2">${mk.featured.slice(0, 8).map(cityCard).join('')}</div></section>
+    <section class="sec"><span class="kicker">Featured cities</span><div class="spread"><h2>Cross-city markets, one platform.</h2><a href="/markets" data-link>Explore markets →</a></div><div class="grid g4 keep2">${mk.states.filter((x) => x.n > 0).slice(0, 8).map(cityCard).join('')}</div></section>
     ${spvs.some((s) => s.status === 'open') ? `<section class="band"><div><h2>Invest in property from one unit</h2><p>Co-own income-producing property through a dedicated SPV. Open now: ${e(spvs.find((s) => s.status === 'open').title)}.</p></div><a class="btn gold" href="/invest" data-link>See investment offers</a></section>` : ''}
     <section class="sec"><span class="kicker">Why ${site()}</span><h2>Trusted infrastructure for property deals.</h2><div class="grid g4">
       <div class="card"><h3>✔ Verified listings</h3><p class="muted">Title, media and lister checks are completed before the badge appears.</p></div>
@@ -85,7 +85,7 @@
   route(/^\/markets$/, async () => {
     const mk = await api('/markets');
     app.innerHTML = `${h1('Markets', 'Explore property by city. Counts update as listings go live.')}<h2>Featured markets</h2><div class="grid g4 keep2">${mk.featured.map(cityCard).join('')}</div>
-      <h2 style="margin-top:30px">All states</h2><p class="muted small">A listing shows under its state even when its town is different.</p><div class="grid g4 keep2">${mk.states.map(cityCard).join('')}</div>${mk.other.length ? `<h2 style="margin-top:30px">More cities</h2><div class="grid g4 keep2">${mk.other.map(cityCard).join('')}</div>` : ''}`;
+      <h2 style="margin-top:30px">All states</h2><p class="muted small">A listing shows under its state even when its town is different.</p><div class="grid g4 keep2">${mk.states.filter((x) => x.n > 0).map(cityCard).join('')}</div>${mk.other.length ? `<h2 style="margin-top:30px">More cities</h2><div class="grid g4 keep2">${mk.other.map(cityCard).join('')}</div>` : ''}`;
   });
   route(/^\/projects$/, async () => {
     const d = await api('/properties?new_dev=1&limit=24');
