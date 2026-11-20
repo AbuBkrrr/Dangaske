@@ -85,7 +85,7 @@
   route(/^\/markets$/, async () => {
     const mk = await api('/markets');
     app.innerHTML = `${h1('Markets', 'Explore property by city. Counts update as listings go live.')}<h2>Featured markets</h2><div class="grid g4 keep2">${mk.featured.map(cityCard).join('')}</div>
-      ${mk.other.length ? `<h2 style="margin-top:30px">More cities</h2><div class="grid g4 keep2">${mk.other.map(cityCard).join('')}</div>` : ''}`;
+      <h2 style="margin-top:30px">All states</h2><p class="muted small">A listing shows under its state even when its town is different.</p><div class="grid g4 keep2">${mk.states.map(cityCard).join('')}</div>${mk.other.length ? `<h2 style="margin-top:30px">More cities</h2><div class="grid g4 keep2">${mk.other.map(cityCard).join('')}</div>` : ''}`;
   });
   route(/^\/projects$/, async () => {
     const d = await api('/properties?new_dev=1&limit=24');

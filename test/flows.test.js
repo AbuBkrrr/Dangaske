@@ -721,3 +721,10 @@ test('city market counts listings by state too', async () => {
   assert.ok(kano.n >= 1, 'Kano card counts the Tarauni listing');
   assert.ok((await anon('GET', '/api/properties?city=Kano&limit=50')).body.items.some((x) => x.title === 'Tarauni plot'));
 });
+
+test('markets page lists every state, counting listings by state', async () => {
+  const m = (await anon('GET', '/api/markets')).body;
+  assert.equal(m.states.length, 37);
+  assert.ok(m.states.find((s) => s.city === 'Kano').n >= 1);
+  assert.equal(m.states.find((s) => s.city === 'Yobe').n, 0);
+});

@@ -29,6 +29,7 @@ const DOC_TYPES = ['NIN slip', 'National ID card', 'International passport', "Dr
 const POST_CATEGORIES = ['insight', 'news', 'guide', 'career'];
 const FEATURED_CITIES = ['Kano', 'Abuja', 'Lagos', 'Kaduna', 'Port Harcourt', 'Katsina', 'Ibadan', 'Enugu'];
 const { str } = listings;
+const NG_STATES = ['Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno', 'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT Abuja', 'Gombe', 'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos', 'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto', 'Taraba', 'Yobe', 'Zamfara'];
 
 const profile = (u) => ({
   ...(u.account_type === 'service' ? { phone: u.phone } : {}),
@@ -224,7 +225,8 @@ module.exports = ({ publicUser }) => {
     const featured = FEATURED_CITIES.map(stats);
     const names = new Set(FEATURED_CITIES.map((c) => c.toLowerCase()));
     const others = [...new Map(live.filter((p) => p.city).map((p) => [p.city.toLowerCase(), p.city])).values()].filter((c) => !names.has(c.toLowerCase())).map(stats);
-    res.json({ featured, other: others.filter((x) => x.n > 0).sort((a, b) => b.n - a.n).slice(0, 60) });
+    const states = NG_STATES.map(stats);
+    res.json({ featured, states, other: others.filter((x) => x.n > 0).sort((a, b) => b.n - a.n).slice(0, 60) });
   });
 
   // ---------- contact + trust reports ----------
