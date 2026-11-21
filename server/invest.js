@@ -55,7 +55,7 @@ function present(s) {
     : null;
   return {
     ...s, sold_units: units, raised: units * s.unit_price, target: s.total_units * s.unit_price,
-    investors: db.prepare("SELECT COUNT(DISTINCT user_id) AS n FROM investments WHERE spv_id = ? AND status = 'active'").get(s.id).n,
+    investors: db.prepare("SELECT COUNT(*) AS n FROM (SELECT user_id FROM investments WHERE spv_id = ? AND status = 'active' GROUP BY user_id HAVING SUM(units) > 0)").get(s.id).n,
     cover: cover ? `/media/${cover.file}` : '', cover_thumb: cover ? `/media/${cover.thumb}` : '',
     distributions: db.prepare('SELECT amount_per_unit, note, created_at FROM distributions WHERE spv_id = ? ORDER BY id DESC').all(s.id),
   };
@@ -104,7 +104,7 @@ r.post('/spvs/:id/invest', requireAuth, async (req, res) => {
 
 r.get('/my/investments', requireAuth, (req, res) => {
   const rows = db
-    .prepare("SELECT i.spv_id, SUM(i.units) AS units, SUM(i.amount) AS amount, MIN(i.created_at) AS since FROM investments i WHERE i.user_id = ? AND i.status = 'active' GROUP BY i.spv_id")
+    .prepare("SELECT i.spv_id, SUM(i.units) AS units, SUM(i.amount) AS amount, MIN(i.created_at) AS since FROM investments i WHERE i.user_id = ? AND i.status = 'active' GROUP BY i.spv_id HAVING SUM(i.units) > 0")
     .all(req.user.id);
   res.json(rows.map((h) => {
     const s = present(db.prepare('SELECT * FROM spvs WHERE id = ?').get(h.spv_id));
@@ -119,7 +119,7 @@ r.get('/my/investments', requireAuth, (req, res) => {
 r.get('/admin/spvs', requireRole('admin'), (_req, res) => {
   res.json(db.prepare('SELECT * FROM spvs ORDER BY id DESC').all().map((s) => ({
     ...present(s),
-    holders: db.prepare("SELECT u.name, u.phone, SUM(i.units) AS units, SUM(i.amount) AS amount FROM investments i JOIN users u ON u.id = i.user_id WHERE i.spv_id = ? AND i.status = 'active' GROUP BY i.user_id ORDER BY units DESC").all(s.id),
+    holders: db.prepare("SELECT u.name, u.phone, SUM(i.units) AS units, SUM(i.amount) AS amount FROM investments i JOIN users u ON u.id = i.user_id WHERE i.spv_id = ? AND i.status = 'active' GROUP BY i.user_id HAVING SUM(i.units) > 0 ORDER BY units DESC").all(s.id),
   })));
 });
 

@@ -1,11 +1,43 @@
 // Property listing logic shared by the web API and the WhatsApp bot.
 const config = require('./config');
-const { db, getSetting } = require('./db');
+const { db, getSetting, addColumn } = require('./db');
 const { HttpError } = require('./auth');
 const media = require('./media');
 const push = require('./push');
 const social = require('./social');
 
+const hooks = { onPublish: [] };
+
+// Approximate city centres, used to measure how far a plot of land is from the city.
+const CITIES = { kano: [12.0022, 8.592], kaduna: [10.5105, 7.4165], abuja: [9.0765, 7.3986], lagos: [6.5244, 3.3792], 'port harcourt': [4.8156, 7.0498], ibadan: [7.3775, 3.947], katsina: [12.9908, 7.6018], enugu: [6.4584, 7.5464], jos: [9.8965, 8.8583], maiduguri: [11.8333, 13.15], zaria: [11.0855, 7.7199], sokoto: [13.0059, 5.2476], 'benin city': [6.335, 5.6037], warri: [5.516, 5.75], owerri: [5.4836, 7.0333], abeokuta: [7.1475, 3.3619], ilorin: [8.4966, 4.5421], bauchi: [10.3158, 9.8442], gombe: [10.2897, 11.1673], yola: [9.2035, 12.4954], minna: [9.6139, 6.5569], lokoja: [7.8023, 6.7333], makurdi: [7.7337, 8.5214], calabar: [4.9757, 8.3417], uyo: [5.0377, 7.9128], akure: [7.2571, 5.2058], osogbo: [7.7827, 4.5418], abakaliki: [6.3249, 8.1137], awka: [6.2104, 7.0741], asaba: [6.1984, 6.7319], umuahia: [5.5265, 7.4906], dutse: [11.7561, 9.3389], 'birnin kebbi': [12.4539, 4.1975], gusau: [12.1704, 6.6641], jalingo: [8.8937, 11.3596], damaturu: [11.7469, 11.9608], lafia: [8.4939, 8.5153], yenagoa: [4.9247, 6.2642], 'ado-ekiti': [7.6211, 5.2214] };
+const STATE_CITY = { 'fct abuja': 'abuja', rivers: 'port harcourt', oyo: 'ibadan', plateau: 'jos', borno: 'maiduguri', edo: 'benin city', kwara: 'ilorin', niger: 'minna', delta: 'asaba', ogun: 'abeokuta', imo: 'owerri', abia: 'umuahia', anambra: 'awka', adamawa: 'yola', benue: 'makurdi', kogi: 'lokoja', 'cross river': 'calabar', 'akwa ibom': 'uyo', ondo: 'akure', osun: 'osogbo', ekiti: 'ado-ekiti', ebonyi: 'abakaliki', jigawa: 'dutse', kebbi: 'birnin kebbi', zamfara: 'gusau', taraba: 'jalingo', yobe: 'damaturu', nasarawa: 'lafia', bayelsa: 'yenagoa' };
+
+function haversineKm(a, b) {
+  const r = (x) => (x * Math.PI) / 180, dLat = r(b[0] - a[0]), dLng = r(b[1] - a[1]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(r(a[0])) * Math.cos(r(b[0])) * Math.sin(dLng / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(h));
+}
+
+/** Distance of a plot from its city centre: from the map pin when there is one, else the lister's own figure. */
+function landDistanceKm(p) {
+  const city = String(p.city || '').trim().toLowerCase(), state = String(p.state || '').trim().toLowerCase();
+  const centre = CITIES[city] || CITIES[STATE_CITY[state] || state];
+  if (p.lat != null && p.lng != null && centre) return haversineKm([p.lat, p.lng], centre);
+  return p.distance_km > 0 ? p.distance_km : null;
+}
+
+/** Inspection fee for a listing, from the bands the admin sets in Settings. */
+function inspectionFee(p) {
+  const g = (k) => int(getSetting(k));
+  if (p.type === 'land') {
+    const km = landDistanceKm(p);
+    const base = g('insp_land_base');
+    if (km == null) return base;
+    return Math.max(base, Math.min(g('insp_land_max') || Infinity, Math.round((base + g('insp_land_km') * km) / 100) * 100));
+  }
+  if (p.purpose === 'sale') return p.price < g('insp_sale_t1') ? g('insp_sale_f1') : p.price < g('insp_sale_t2') ? g('insp_sale_f2') : g('insp_sale_f3');
+  return p.price < g('insp_rent_limit') ? g('insp_rent_low') : g('insp_rent_high'); // rent and short-let
+}
 const PURPOSES = ['sale', 'rent', 'shortlet'];
 const TYPES = ['house', 'duplex', 'bungalow', 'apartment', 'land', 'commercial'];
 
@@ -38,16 +70,28 @@ function cleanFields(input, { partial = false } = {}) {
   set('contact_phone', str(input.contact_phone, 30));
   set('map_url', /^https:\/\//i.test(String(input.map_url || '')) ? str(input.map_url, 300) : '');
   set('easy_buy', input.easy_buy === true || /^(1|true|yes|y)$/i.test(String(input.easy_buy)) ? 1 : 0);
+  set('nearby', str(input.nearby, 300));
+  set('tour_url', /^https:\/\//i.test(String(input.tour_url || '')) ? str(input.tour_url, 300) : '');
+  for (const [k, lim] of [['lat', 90], ['lng', 180]]) {
+    if (has(k)) { const n = Number(input[k]); out[k] = input[k] !== '' && Number.isFinite(n) && Math.abs(n) <= lim ? n : null; }
+  }
   set('new_dev', input.new_dev === true || /^(1|true|yes|y)$/i.test(String(input.new_dev)) ? 1 : 0);
+  if (has('distance_km')) { const n = Number(input.distance_km); out.distance_km = n > 0 ? Math.min(n, 2000) : null; }
   if (has('unlock_fee')) out.unlock_fee = input.unlock_fee === '' ? null : int(input.unlock_fee, 1e7);
+  // A Google Maps link sets the pin unless latitude/longitude were typed in.
+  const typedCoords = [input.lat, input.lng].some((v) => v !== undefined && v !== null && v !== '');
+  if (out.map_url && !typedCoords) { const c = coordsFromLink(out.map_url); if (c) { out.lat = c.lat; out.lng = c.lng; } }
   return out;
 }
+
+// Members never see each other's numbers: public listings show Dangaske's contact.
+const adminContact = () => require('./db').getSetting('support_whatsapp') || require('./db').getSetting('listing_whatsapp') || '';
 
 function createProperty(owner, input, source = 'web') {
   const f = cleanFields(input);
   if (!f.title) throw new HttpError(400, 'A title is required.');
   if (!f.price) throw new HttpError(400, 'A valid price is required.');
-  if (!f.contact_phone) f.contact_phone = owner.phone;
+  if (!f.contact_phone) f.contact_phone = adminContact();
   f.owner_id = owner.id;
   f.source = source;
   const keys = Object.keys(f);
@@ -88,7 +132,8 @@ const mediaUrl = (file) => (file ? `/media/${file}` : '');
 function agentOf(p) {
   const u = db.prepare('SELECT id, name, company, role, account_type, verified FROM users WHERE id = ?').get(p.owner_id);
   if (!u) return null;
-  return { id: u.id, name: u.company || u.name || (u.role === 'admin' ? config.COMPANY : 'Agent'), type: u.account_type, verified: Boolean(u.verified) || u.role === 'admin' };
+  const r = db.prepare('SELECT ROUND(AVG(rating), 1) AS avg, COUNT(*) AS n FROM reviews WHERE agent_id = ?').get(u.id);
+  return { id: u.id, name: u.company || u.name || (u.role === 'admin' ? config.COMPANY : 'Agent'), type: u.account_type, verified: Boolean(u.verified) || u.role === 'admin', rating: r.avg, reviews: r.n };
 }
 
 function present(p, user) {
@@ -104,20 +149,25 @@ function present(p, user) {
     state: p.state, city: p.city, area: p.area,
     bedrooms: p.bedrooms, bathrooms: p.bathrooms, size_sqm: p.size_sqm,
     easy_buy: Boolean(p.easy_buy), status: p.status,
+    nearby: p.nearby, has_tour: Boolean(p.tour_url),
+    // Public map position is rounded (about 1 km) so the exact location stays behind the unlock.
+    approx: p.lat != null && p.lng != null ? [Math.round(p.lat * 100) / 100, Math.round(p.lng * 100) / 100] : null,
+    fav: Boolean(user && db.prepare('SELECT 1 FROM favourites WHERE user_id = ? AND property_id = ?').get(user.id, p.id)),
     verified: Boolean(p.verified), featured: Boolean(p.featured), new_dev: Boolean(p.new_dev), agent: agentOf(p),
     created_at: p.created_at, published_at: p.published_at, sold_at: p.sold_at,
     cover: cover ? mediaUrl(cover.file) : '', cover_thumb: cover ? mediaUrl(cover.thumb) : '',
     image_count: counts.images || 0, video_count: counts.videos || 0,
     excerpt: p.description.length > 160 ? p.description.slice(0, 160).trimEnd() + '…' : p.description,
-    unlock_fee: fee, locked: !full, can_manage: manage,
+    unlock_fee: fee, locked: !full, can_manage: manage, inspection_fee: inspectionFee(p),
+    views: manage ? viewCount(p.id) : undefined,
   };
   if (full) {
     const owner = db.prepare('SELECT name, role FROM users WHERE id = ?').get(p.owner_id);
     Object.assign(out, {
       description: p.description, address: p.address, features: p.features, title_doc: p.title_doc,
-      contact_phone: p.contact_phone, map_url: p.map_url,
+      contact_phone: canManage(user, p) ? p.contact_phone : adminContact(), map_url: p.map_url, distance_km: p.distance_km, lat: p.lat, lng: p.lng, tour_url: p.tour_url,
       listed_by: owner ? owner.name || (owner.role === 'admin' ? config.COMPANY : 'Agent') : '',
-      media: db.prepare('SELECT * FROM media WHERE property_id = ? ORDER BY id').all(p.id).map((m) => ({
+      media: db.prepare('SELECT * FROM media WHERE property_id = ? ORDER BY sort_order, id').all(p.id).map((m) => ({
         id: m.id, kind: m.kind, status: m.status, url: mediaUrl(m.file), thumb: mediaUrl(m.thumb),
         is_cover: m.id === p.cover_media_id,
         ...(manage ? { bytes: m.bytes, orig_bytes: m.orig_bytes } : {}),
@@ -146,7 +196,7 @@ function search(q, user) {
   if (q.new_dev === '1') add('new_dev = 1');
   if (q.featured === '1') add('featured = 1');
   if (q.verified === '1') add('verified = 1');
-  if (q.city) add('city = ? COLLATE NOCASE', String(q.city));
+  if (q.city) add('(city = ? COLLATE NOCASE OR state = ? COLLATE NOCASE)', String(q.city), String(q.city));
   if (int(q.owner)) add('owner_id = ?', int(q.owner));
   if (q.available === '1') add("status = 'active'");
   const order = { price_asc: 'price ASC', price_desc: 'price DESC' }[q.sort] || "status = 'sold', featured DESC, published_at DESC, id DESC";
@@ -169,6 +219,7 @@ function publish(p) {
   p = getProperty(p.id);
   const headline = `${p.title} — ${naira(p.price)}`;
   push.notify({ title: 'New listing', body: `${headline}${place(p) ? ' · ' + place(p) : ''}`, url: propertyUrl(p) });
+  for (const fn of hooks.onPublish) { try { fn(p); } catch (e) { console.error('publish hook failed:', e.message); } }
   social.autoPost(p).catch((e) => console.error('Social auto-post failed:', e.message));
 
   const matches = db
@@ -189,7 +240,7 @@ function publish(p) {
 /** Owner submits a draft. Admin listings go live at once; agent listings wait for approval. */
 function submit(p, user) {
   if (!['draft', 'rejected'].includes(p.status)) return p;
-  if (user.role === 'admin') return publish(p);
+  if (user.role === 'admin' || user.verified) return publish(p); // unverified agents wait for an admin
   db.prepare("UPDATE properties SET status = 'pending' WHERE id = ?").run(p.id);
   push.notifyAdmins({ title: 'Listing awaiting approval', body: p.title, url: '/admin' });
   return getProperty(p.id);
@@ -220,8 +271,57 @@ function removeProperty(p) {
   })();
 }
 
+// ---- studio: photo order, views, Google Maps pins ----
+addColumn('media', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
+db.exec(`CREATE TRIGGER IF NOT EXISTS media_sort AFTER INSERT ON media BEGIN
+  UPDATE media SET sort_order = (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM media WHERE property_id = NEW.property_id AND id != NEW.id) WHERE id = NEW.id;
+END`);
+db.exec(`CREATE TABLE IF NOT EXISTS views (
+  property_id INTEGER NOT NULL, viewer TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (property_id, viewer, day))`);
+
+/** Latitude and longitude from a Google Maps link (or typed as "lat,lng"). Null when none is found. */
+function coordsFromLink(text) {
+  let s = String(text || '');
+  try { s = decodeURIComponent(s); } catch { /* use as typed */ }
+  const m = s.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/) || s.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)
+    || s.match(/[?&](?:q|ll|query|center)=(-?\d+\.\d+)[,\s](-?\d+\.\d+)/i)
+    || s.match(/^\s*(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)\s*$/);
+  if (!m) return null;
+  const lat = Number(m[1]), lng = Number(m[2]);
+  return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null;
+}
+
+const viewCount = (pid) => db.prepare('SELECT COALESCE(SUM(n), 0) AS n FROM views WHERE property_id = ?').get(pid).n;
+
+/** Count a view once per viewer per day. A signed-in buyer or agent's first view of the day is also sent to the owner. */
+function recordView(p, user, ip) {
+  try {
+    if (!['active', 'sold'].includes(p.status) || (user && user.id === p.owner_id)) return;
+    const viewer = user ? `u${user.id}` : `ip${require('crypto').createHash('sha256').update(String(ip || '')).digest('hex').slice(0, 16)}`;
+    const day = new Date().toISOString().slice(0, 10);
+    const seen = db.prepare('SELECT 1 FROM views WHERE property_id = ? AND viewer = ? AND day = ?').get(p.id, viewer, day);
+    db.prepare('INSERT INTO views(property_id, viewer, day, n) VALUES(?,?,?,1) ON CONFLICT(property_id, viewer, day) DO UPDATE SET n = n + 1').run(p.id, viewer, day);
+    if (!seen && user) {
+      const who = ['agent', 'admin'].includes(user.role) ? `Agent ${user.company || user.name || 'a member'}` : 'A buyer';
+      db.prepare('INSERT INTO notifications(user_id, title, body, url) VALUES(?,?,?,?)').run(p.owner_id, 'Listing viewed', `${who} viewed ${p.title}`, `/p/${p.id}`);
+    }
+  } catch (e) {
+    console.error('view not recorded:', e.message);
+  }
+}
+
+/** Publish every listing an agent has waiting; called when an admin verifies the account. */
+function publishPendingFor(ownerId) {
+  const rows = db.prepare("SELECT * FROM properties WHERE owner_id = ? AND status = 'pending'").all(ownerId);
+  for (const p of rows) publish(p);
+  return rows.length;
+}
+
 module.exports = {
-  PURPOSES, TYPES, int, str, naira, place, propertyUrl,
+  adminContact,
+  publishPendingFor,
+  hooks, inspectionFee, landDistanceKm, coordsFromLink, viewCount, recordView, PURPOSES, TYPES, int, str, naira, place, propertyUrl,
   createProperty, updateProperty, getProperty, mustGet, canManage, unlockFee, hasUnlocked,
   present, search, publish, submit, markSold, removeProperty,
 };

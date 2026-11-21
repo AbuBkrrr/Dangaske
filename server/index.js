@@ -5,16 +5,18 @@ const multer = require('multer');
 const config = require('./config');
 const { db, audit, allSettings, setSetting, DEFAULT_SETTINGS } = require('./db');
 const auth = require('./auth');
-const { HttpError, requireAuth, requireRole } = auth;
+const { HttpError, requireAuth, requireRole, requireVerifiedPro, needKyc } = auth;
 const listings = require('./listings');
 const media = require('./media');
 const payments = require('./payments');
 const push = require('./push');
 const whatsapp = require('./whatsapp');
+const mail = require('./mail');
 
 const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+if (config.TEST_MODE) app.use((_req, res, next) => { res.setHeader('X-Robots-Tag', 'noindex, nofollow'); next(); });
 app.use(express.json({ limit: '200kb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -32,12 +34,14 @@ const upload = multer({
 
 const publicUser = (u) => (u ? {
   id: u.id, phone: u.phone, name: u.name, role: u.role, account_type: u.account_type, company: u.company, bio: u.bio, city: u.city,
+  kyc_data: (() => { try { return JSON.parse(u.kyc_data || '{}'); } catch { return {}; } })(),
+  email: u.email, email_verified: Boolean(u.email_verified),
   service_category: u.service_category, verified: Boolean(u.verified), kyc_status: u.kyc_status, kyc_note: u.kyc_note,
 } : null);
 const api = express.Router();
 
 // Audit trail: every admin action and every sensitive member action is recorded.
-const AUDITED = /^\/(admin\/|escrows\/|me\/kyc$|spvs\/\d+\/invest$|properties\/\d+(\/(sold|submit|escrow))?$)/;
+const AUDITED = /^\/(admin\/|escrows\/|me\/kyc$|inspections\/|unit-listings\/|documents|spvs\/\d+\/invest$|properties\/\d+(\/(sold|submit|escrow))?$)/;
 api.use((req, res, next) => {
   if (req.method !== 'GET' && AUDITED.test(req.path)) {
     res.on('finish', () => {
@@ -53,14 +57,21 @@ api.post('/auth/request-otp', auth.rateLimit('otp', 8, 15 * 60 * 1000), async (r
   const phone = auth.normalizePhone(req.body.phone);
   if (!phone) throw new HttpError(400, 'Enter a valid phone number.');
   const code = auth.createOtp(phone);
+  // The code goes to WhatsApp and, for members with a verified email address, to their email too.
+  const known = db.prepare('SELECT email, email_verified FROM users WHERE phone = ?').get(phone);
+  const channels = [];
   try {
     await whatsapp.sendOtp(phone, code);
+    channels.push('whatsapp');
   } catch (e) {
     console.error(e.message);
+  }
+  if (known && known.email_verified && await mail.send(known.email, `${code} is your ${config.SITE_NAME} code`, `Your verification code is ${code}. It expires in 10 minutes. Do not share it.`)) channels.push('email');
+  if (!channels.length) {
     db.prepare('DELETE FROM otps WHERE phone = ?').run(phone);
     throw new HttpError(502, 'We could not send the code on WhatsApp. Check the number and try again.');
   }
-  const out = { ok: true, phone, is_new: !db.prepare('SELECT 1 FROM users WHERE phone = ?').get(phone) };
+  const out = { ok: true, phone, channels, is_new: !known };
   // Demo mode only (WhatsApp not configured, not production): show the code so the site can be tried.
   if (!config.WHATSAPP_LIVE && !config.PRODUCTION) out.demo_code = code;
   res.json(out);
@@ -71,10 +82,96 @@ api.post('/auth/verify', auth.rateLimit('verify', 20, 15 * 60 * 1000), (req, res
   if (!phone) throw new HttpError(400, 'Enter a valid phone number.');
   auth.checkOtp(phone, req.body.code);
   const user = auth.upsertUser(phone, { name: req.body.name, role: req.body.role });
-  if (user.isNew && user.role === 'agent') { db.prepare("UPDATE users SET account_type = 'agent' WHERE id = ?").run(user.id); user.account_type = 'agent'; }
+  if (user.isNew && user.role === 'agent') {
+    const type = ['agent', 'agency', 'developer', 'service'].includes(req.body.role) ? req.body.role : 'agent';
+    db.prepare('UPDATE users SET account_type = ? WHERE id = ?').run(type, user.id);
+    user.account_type = type;
+  }
+  if (user.isNew) experience.applyReferral(user, req.body.ref);
   audit(user.id, user.isNew ? 'signup' : 'login');
   auth.createSession(res, user.id);
   res.json({ user: publicUser(user) });
+});
+
+// Sign up with a phone number and password. Agents can post at once; their listings go live when an admin verifies them.
+api.post('/auth/register', auth.rateLimit('register', 25, 15 * 60 * 1000), (req, res) => {
+  const phone = auth.normalizePhone(req.body.phone);
+  if (!phone) throw new HttpError(400, 'Enter a valid phone number.');
+  const password = String(req.body.password || '');
+  if (password.length < 8) throw new HttpError(400, 'Choose a password of at least 8 characters.');
+  const name = String(req.body.name || '').trim().slice(0, 80);
+  if (name.length < 2) throw new HttpError(400, 'Enter your full name.');
+  if (db.prepare('SELECT 1 FROM users WHERE phone = ?').get(phone)) throw new HttpError(409, 'This number already has an account. Sign in instead.');
+  const email = String(req.body.email || '').trim().toLowerCase();
+  if (email && !mail.valid(email)) throw new HttpError(400, 'Enter a valid email address, or leave it empty.');
+  const role = ['buyer', 'agent', 'agency', 'developer', 'service'].includes(req.body.role) ? req.body.role : 'buyer';
+  const pro = role !== 'buyer';
+  const user = auth.upsertUser(phone, { name, role: pro ? 'agent' : 'buyer' });
+  db.prepare('UPDATE users SET password_hash = ?, account_type = ?, email = ?, email_verified = 0 WHERE id = ?')
+    .run(auth.hashPassword(password), pro ? role : 'individual', email, user.id);
+  experience.applyReferral(user, req.body.ref);
+  auth.createSession(res, user.id);
+  audit(user.id, 'signup');
+  res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id)) });
+});
+
+api.post('/auth/login', auth.rateLimit('login', 30, 15 * 60 * 1000), (req, res) => {
+  const phone = auth.normalizePhone(req.body.phone);
+  const u = phone ? db.prepare('SELECT * FROM users WHERE phone = ?').get(phone) : null;
+  if (!u || !auth.checkPassword(req.body.password, u.password_hash)) throw new HttpError(400, 'Wrong phone number or password.');
+  if (u.suspended) throw new HttpError(403, 'This account is suspended. Please contact support.');
+  if (config.ADMIN_PHONES.includes(phone) && u.role !== 'admin') {
+    db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(u.id);
+    u.role = 'admin';
+  }
+  auth.createSession(res, u.id);
+  audit(u.id, 'login');
+  res.json({ user: publicUser(u) });
+});
+
+// Password reset: a code goes to the member's confirmed email. Admins can also reset from the server (setpassword.js).
+// For members with no confirmed email: their request appears in Admin > Verification, and an admin resets the password.
+api.post('/auth/reset-request-admin', auth.rateLimit('reset-admin', 5, 60 * 60 * 1000), (req, res) => {
+  const phone = auth.normalizePhone(req.body.phone);
+  const u = phone ? db.prepare('SELECT id FROM users WHERE phone = ?').get(phone) : null;
+  if (u) db.prepare('INSERT INTO reset_requests(user_id) VALUES(?) ON CONFLICT(user_id) DO UPDATE SET created_at = datetime(\'now\')').run(u.id);
+  res.json({ ok: true });
+});
+
+// Member changes their own password while signed in.
+api.post('/me/password', requireAuth, auth.rateLimit('my-password', 10, 60 * 60 * 1000), (req, res) => {
+  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!auth.checkPassword(req.body.current, u.password_hash)) throw new HttpError(400, 'Your current password is not right.');
+  const password = String(req.body.password || '');
+  if (password.length < 8) throw new HttpError(400, 'Choose a password of at least 8 characters.');
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(auth.hashPassword(password), u.id);
+  audit(u.id, 'password changed');
+  res.json({ ok: true });
+});
+
+api.post('/auth/reset-request', auth.rateLimit('reset', 8, 60 * 60 * 1000), async (req, res) => {
+  const phone = auth.normalizePhone(req.body.phone);
+  const u = phone ? db.prepare('SELECT * FROM users WHERE phone = ?').get(phone) : null;
+  const out = { ok: true }; // the same answer whether or not the account exists
+  if (u && u.email_verified && u.email) {
+    const code = auth.createOtp(`reset:${u.id}`);
+    await mail.send(u.email, `${code} is your ${config.SITE_NAME} reset code`, `Your password reset code is ${code}. It expires in 10 minutes. If you did not ask for this, ignore this email.`);
+    if (!mail.LIVE && !config.PRODUCTION) out.demo_code = code; // demo mode only
+  }
+  res.json(out);
+});
+
+api.post('/auth/reset-confirm', auth.rateLimit('reset-confirm', 20, 15 * 60 * 1000), (req, res) => {
+  const phone = auth.normalizePhone(req.body.phone);
+  const u = phone ? db.prepare('SELECT * FROM users WHERE phone = ?').get(phone) : null;
+  if (!u) throw new HttpError(400, 'That code is not valid. Request a new one.');
+  const password = String(req.body.password || '');
+  if (password.length < 8) throw new HttpError(400, 'Choose a password of at least 8 characters.');
+  auth.checkOtp(`reset:${u.id}`, req.body.code);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(auth.hashPassword(password), u.id);
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(u.id); // sign out everywhere
+  audit(u.id, 'password reset');
+  res.json({ ok: true });
 });
 
 api.post('/auth/logout', (req, res) => {
@@ -94,6 +191,8 @@ api.get('/me', (req, res) => {
       default_unlock_fee: Number(s.default_unlock_fee),
       escrow_fee_pct: Number(s.escrow_fee_pct),
       support_whatsapp: s.support_whatsapp,
+      pay_by_transfer: Boolean(payments.bankDetails()), listing_whatsapp: s.listing_whatsapp, request_fee: Number(s.request_fee), inspection_fee: Number(s.inspection_fee), title_check_fee: Number(s.title_check_fee), referral_reward: Number(s.referral_reward), secondary_market: s.secondary_market === '1',
+      phones: s.phones, rc_number: config.RC_NUMBER,
       contact_email: s.contact_email,
       office_address: s.office_address,
       currency_rates: (() => { try { return JSON.parse(s.currency_rates); } catch { return {}; } })(),
@@ -112,6 +211,7 @@ api.get('/properties/:id', (req, res) => {
   const p = listings.mustGet(req.params.id);
   const visible = ['active', 'sold'].includes(p.status) || listings.canManage(req.user, p);
   if (!visible) throw new HttpError(404, 'Listing not found.');
+  listings.recordView(p, req.user, req.ip);
   const out = listings.present(p, req.user);
   if (p.easy_buy && p.status === 'active') {
     out.plans = db.prepare('SELECT * FROM plans WHERE active = 1 ORDER BY months').all().map((pl) => payments.quote(p.price, pl));
@@ -120,6 +220,8 @@ api.get('/properties/:id', (req, res) => {
 });
 
 const manageable = (req) => {
+  const gate = needKyc(req.user);
+  if (gate) throw gate;
   const p = listings.mustGet(req.params.id);
   if (!listings.canManage(req.user, p)) throw new HttpError(403, 'You cannot manage this listing.');
   return p;
@@ -130,7 +232,7 @@ api.get('/my/properties', requireAuth, (req, res) => {
   res.json(rows.map((p) => listings.present(p, req.user)));
 });
 
-api.post('/properties', requireRole('agent', 'admin'), (req, res) => {
+api.post('/properties', requireVerifiedPro, (req, res) => {
   const p = listings.createProperty(req.user, req.body);
   res.status(201).json(listings.present(p, req.user));
 });
@@ -175,6 +277,19 @@ api.delete('/properties/:id/media/:mediaId', requireAuth, (req, res) => {
   res.json(listings.present(listings.getProperty(p.id), req.user));
 });
 
+// Photo order: the first photo in the list becomes the cover.
+api.post('/properties/:id/media/order', requireAuth, (req, res) => {
+  const p = manageable(req);
+  const ids = (Array.isArray(req.body.ids) ? req.body.ids : []).map(Number).filter(Boolean);
+  const mine = db.prepare('SELECT id, kind FROM media WHERE property_id = ?').all(p.id);
+  if (ids.some((id) => !mine.some((m) => m.id === id))) throw new HttpError(400, 'Unknown media item.');
+  const upd = db.prepare('UPDATE media SET sort_order = ? WHERE id = ?');
+  db.transaction(() => ids.forEach((id, i) => upd.run(i + 1, id)))();
+  const first = ids.find((id) => mine.some((m) => m.id === id && m.kind === 'image'));
+  if (first) db.prepare('UPDATE properties SET cover_media_id = ? WHERE id = ?').run(first, p.id);
+  res.json(listings.present(listings.getProperty(p.id), req.user));
+});
+
 api.post('/properties/:id/cover', requireAuth, (req, res) => {
   const p = manageable(req);
   const row = db.prepare("SELECT id FROM media WHERE id = ? AND property_id = ? AND kind = 'image'").get(Number(req.body.media_id) || 0, p.id);
@@ -215,10 +330,13 @@ api.get('/plans', (_req, res) => res.json(db.prepare('SELECT * FROM plans WHERE 
 
 api.post('/properties/:id/subscribe', requireAuth, (req, res) => {
   const id = payments.subscribe(req.user, listings.mustGet(req.params.id), req.body.plan_id);
-  res.status(201).json(payments.subscriptionsFor('s.id = ?', id)[0]);
+  res.status(201).json(withoutPhones(payments.subscriptionsFor('s.id = ?', id))[0]);
 });
 
-api.get('/my/subscriptions', requireAuth, (req, res) => res.json(payments.subscriptionsFor('s.user_id = ?', req.user.id)));
+// Members see each other's names but never phone numbers.
+const withoutPhones = (rows) => rows.map(({ user_phone, buyer_phone, seller_phone, ...rest }) => rest);
+
+api.get('/my/subscriptions', requireAuth, (req, res) => res.json(withoutPhones(payments.subscriptionsFor('s.user_id = ?', req.user.id))));
 
 api.post('/installments/:id/pay', requireAuth, async (req, res) => res.json(await payments.payInstallment(req.user, req.params.id)));
 
@@ -226,17 +344,20 @@ api.post('/installments/:id/pay', requireAuth, async (req, res) => res.json(awai
 
 api.post('/properties/:id/escrow', requireAuth, (req, res) => {
   const id = payments.createEscrow(req.user, listings.mustGet(req.params.id), req.body);
-  res.status(201).json(payments.escrowsFor('e.id = ?', id)[0]);
+  res.status(201).json(withoutPhones(payments.escrowsFor('e.id = ?', id))[0]);
 });
 
-api.get('/my/escrows', requireAuth, (req, res) => {
+api.get('/my/escrows', requireAuth, async (req, res) => {
+  // Catch up with PayScrow for escrows still waiting on it (a webhook may be late).
+  for (const e of db.prepare("SELECT * FROM escrows WHERE (buyer_id = ? OR seller_id = ?) AND ps_number != '' AND status IN ('awaiting_payment','funded','disputed') LIMIT 5").all(req.user.id, req.user.id)) await payscrow.sync(e);
   const rows = payments.escrowsFor('e.buyer_id = ? OR e.seller_id = ?', req.user.id, req.user.id);
-  res.json(rows.map((e) => ({ ...e, role: e.buyer_id === req.user.id ? 'buyer' : 'seller' })));
+  res.json(withoutPhones(rows).map((e) => ({ ...e, role: e.buyer_id === req.user.id ? 'buyer' : 'seller' })));
 });
 
 api.post('/escrows/:id/pay', requireAuth, async (req, res) => res.json(await payments.payEscrow(req.user, req.params.id)));
-api.post('/escrows/:id/release', requireAuth, (req, res) => { payments.releaseEscrow(req.user, req.params.id); res.json({ ok: true }); });
-api.post('/escrows/:id/dispute', requireAuth, (req, res) => { payments.disputeEscrow(req.user, req.params.id, req.body.note); res.json({ ok: true }); });
+api.post('/escrows/:id/release', requireAuth, async (req, res) => { await payments.releaseEscrow(req.user, req.params.id, (req.body || {}).code); res.json({ ok: true }); });
+api.post('/escrows/:id/delivery', requireAuth, async (req, res) => { await payments.submitDelivery(req.user, req.params.id, (req.body || {}).notes); res.json({ ok: true }); });
+api.post('/escrows/:id/dispute', requireAuth, async (req, res) => { await payments.disputeEscrow(req.user, req.params.id, (req.body || {}).note); res.json({ ok: true }); });
 api.post('/escrows/:id/cancel', requireAuth, (req, res) => { payments.cancelEscrow(req.user, req.params.id); res.json({ ok: true }); });
 api.post('/escrows/:id/refund', requireRole('admin'), (req, res) => { payments.refundEscrow(req.user, req.params.id, req.body.note); res.json({ ok: true }); });
 
@@ -253,35 +374,53 @@ api.post('/paystack/webhook', async (req, res) => {
 
 // ---------- Property requests ----------
 
-api.post('/requests', requireAuth, (req, res) => {
+function announceRequest(id) {
+  const r = db.prepare('SELECT * FROM requests WHERE id = ?').get(id);
+  if (!r) return;
+  const where = [r.city, r.state].filter(Boolean).join(', ');
+  const summary = `${r.type || 'Property'} for ${r.purpose}${where ? ' in ' + where : ''}`;
+  push.notifyAdmins({ title: 'New property request', body: summary, url: '/requests' });
+  for (const a of db.prepare("SELECT id FROM users WHERE role = 'agent' AND id != ?").all(r.user_id)) {
+    push.notify({ userId: a.id, title: 'New property request', body: summary, url: '/requests' });
+  }
+}
+
+// A request is published once its fee is paid.
+payments.handlers.request = (pay, already, after) => {
+  const r = db.prepare('SELECT * FROM requests WHERE id = ?').get(pay.target_id);
+  if (!already && r && r.status === 'awaiting_payment') {
+    db.prepare("UPDATE requests SET status = 'open' WHERE id = ?").run(r.id);
+    after.push(() => announceRequest(r.id));
+  }
+  return { redirect: '/requests', message: 'Request published. Agents have been alerted.' };
+};
+
+api.post('/requests', requireAuth, async (req, res) => {
   const b = req.body;
   const details = listings.str(b.details, 1500);
   const purpose = listings.PURPOSES.includes(b.purpose) ? b.purpose : 'sale';
   const type = listings.TYPES.includes(b.type) ? b.type : '';
   if (!type && !details) throw new HttpError(400, 'Tell us what kind of property you need.');
+  const fee = req.user.role === 'admin' ? 0 : listings.int(allSettings().request_fee, 1e7);
   const id = db
-    .prepare('INSERT INTO requests(user_id, purpose, type, state, city, min_price, max_price, bedrooms, details, contact_phone) VALUES(?,?,?,?,?,?,?,?,?,?)')
+    .prepare('INSERT INTO requests(user_id, purpose, type, state, city, min_price, max_price, bedrooms, details, contact_phone, status) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
     .run(req.user.id, purpose, type, listings.str(b.state, 60), listings.str(b.city, 60), listings.int(b.min_price), listings.int(b.max_price),
-      listings.int(b.bedrooms, 50), details, listings.str(b.contact_phone, 30) || req.user.phone).lastInsertRowid;
-  const where = [listings.str(b.city, 60), listings.str(b.state, 60)].filter(Boolean).join(', ');
-  const summary = `${type || 'Property'} for ${purpose}${where ? ' in ' + where : ''}`;
-  push.notifyAdmins({ title: 'New property request', body: summary, url: '/requests' });
-  for (const a of db.prepare("SELECT id FROM users WHERE role = 'agent' AND id != ?").all(req.user.id)) {
-    push.notify({ userId: a.id, title: 'New property request', body: summary, url: '/requests' });
-  }
+      listings.int(b.bedrooms, 50), details, listings.str(b.contact_phone, 30) || req.user.phone, fee > 0 ? 'awaiting_payment' : 'open').lastInsertRowid;
+  if (fee > 0) return res.status(201).json({ id, ...(await payments.start(req.user, 'request', id, fee)) });
+  announceRequest(id);
   res.status(201).json({ id });
 });
 
 api.get('/requests', (req, res) => {
-  const pro = req.user && ['agent', 'admin'].includes(req.user.role);
+  const isAdmin = Boolean(req.user && req.user.role === 'admin');
   const rows = db
     .prepare("SELECT r.*, u.name AS user_name, u.role AS user_role FROM requests r JOIN users u ON u.id = r.user_id WHERE r.status = 'open' ORDER BY r.id DESC LIMIT 100")
     .all();
   res.json(rows.map((r) => {
     const mine = req.user && r.user_id === req.user.id;
     const { contact_phone, user_name, user_id, ...rest } = r;
-    // Contact details are only shown to agents and admins.
-    return { ...rest, mine: Boolean(mine), ...(pro || mine ? { contact_phone, user_name } : {}) };
+    // Contact details are only shown to the requester and admins; everyone else messages Dangaske.
+    return { ...rest, mine: Boolean(mine), ...(mine || isAdmin ? { contact_phone, user_name } : {}) };
   }));
 });
 
@@ -350,10 +489,10 @@ admin.get('/overview', (req, res) => {
     escrows: payments.escrowsFor('1=1'),
     subscriptions: payments.subscriptionsFor('1=1'),
     plans: db.prepare('SELECT * FROM plans ORDER BY months').all(),
-    users: db.prepare('SELECT id, phone, name, role, created_at, account_type, company, verified, kyc_status, kyc_doc_type, kyc_note, suspended FROM users ORDER BY id DESC LIMIT 200').all(),
+    users: db.prepare('SELECT id, phone, name, role, created_at, account_type, company, verified, kyc_status, kyc_doc_type, kyc_note, kyc_data, kyc_files, suspended FROM users ORDER BY id DESC LIMIT 200').all(),
     settings: allSettings(),
     integrations: {
-      whatsapp: config.WHATSAPP_LIVE, payments: config.PAYMENTS_LIVE, video_compression: media.HAS_FFMPEG,
+      whatsapp: config.WHATSAPP_LIVE, email: mail.LIVE, payscrow: payscrow.enabled(), payments: config.PAYMENTS_LIVE, video_compression: media.HAS_FFMPEG,
       facebook: Boolean(config.FB_PAGE_ID && config.FB_PAGE_TOKEN), telegram: Boolean(config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_CHAT_ID),
     },
   });
@@ -385,6 +524,10 @@ admin.put('/settings', (req, res) => {
         v = JSON.stringify(Object.fromEntries(Object.entries(r).filter(([k, n]) => /^[A-Z]{3}$/.test(k) && Number(n) > 0).slice(0, 8)));
       } catch { continue; }
     }
+    if (['inspection_fee', 'title_check_fee', 'referral_reward', 'request_fee'].includes(key) || key.startsWith('insp_')) v = String(listings.int(v, 1e8));
+    if (key === 'payscrow_merchant_charge_pct') v = String(Math.min(100, Math.max(0, Math.round(Number(v) || 0))));
+    if (key === 'bank_account_number') v = v.replace(/\D/g, '').slice(0, 20);
+    if (key === 'secondary_market') v = /^(1|true|on|yes)$/i.test(v) ? '1' : '0';
     if (key === 'default_unlock_fee') v = String(listings.int(v, 1e7));
     if (key === 'escrow_fee_pct') v = String(Math.min(Math.max(Number(v) || 0, 0), 20));
     setSetting(key, v);
@@ -418,6 +561,29 @@ admin.post('/users/:id/role', (req, res) => {
   res.json({ ok: true });
 });
 
+// Sends a real test message and returns the mail server's answer, so SMTP problems are visible.
+admin.get('/reset-requests', (_req, res) => {
+  res.json(db.prepare('SELECT u.id, u.name, u.phone, u.email, u.email_verified, r.created_at FROM reset_requests r JOIN users u ON u.id = r.user_id ORDER BY r.created_at').all());
+});
+
+// Gives the member a one-time temporary password, shown to the admin once. Signs the member out everywhere.
+admin.post('/users/:id/reset-password', (req, res) => {
+  const u = db.prepare('SELECT id, phone FROM users WHERE id = ?').get(Number(req.params.id) || 0);
+  if (!u) throw new HttpError(404, 'Member not found.');
+  const password = require('crypto').randomBytes(6).toString('base64url');
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(auth.hashPassword(password), u.id);
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(u.id);
+  db.prepare('DELETE FROM reset_requests WHERE user_id = ?').run(u.id);
+  audit(req.user.id, 'admin reset password', `member ${u.id}`);
+  res.json({ password, phone: u.phone });
+});
+
+admin.post('/test-email', async (req, res) => {
+  const to = String(req.body.to || '').trim() || allSettings().contact_email || req.user.email;
+  const r = await mail.deliver(to, `Test email from ${config.SITE_NAME}`, 'This is a test. If you can read this, email sending works.');
+  res.json({ ...r, to, live: mail.LIVE });
+});
+
 admin.post('/broadcast', (req, res) => {
   const title = listings.str(req.body.title, 80);
   if (!title) throw new HttpError(400, 'A title is required.');
@@ -427,15 +593,35 @@ admin.post('/broadcast', (req, res) => {
 
 api.use(require('./extras')({ publicUser }));
 api.use(require('./invest'));
+const payscrow = require('./payscrow');
+api.use(payscrow.router);
+const experience = require('./experience');
+api.use(experience.router);
+// Shared hosts put idle apps to sleep, so the hourly jobs can also be triggered by a cron job:
+//   curl -s "https://your-domain/api/cron?key=CRON_KEY"
+api.get('/cron', (req, res) => {
+  if (!config.CRON_KEY || req.query.key !== config.CRON_KEY) return res.sendStatus(404);
+  sweep();
+  res.json({ ok: true, ...experience.remind() });
+});
+
 api.use('/admin', admin);
 api.use((_req, _res, next) => next(new HttpError(404, 'Not found.')));
 app.use('/api', api);
 
 // ---------- Static files + pages ----------
 
+// Lets the Android app (a Trusted Web Activity) open the site full-screen without a browser bar.
+app.get('/.well-known/assetlinks.json', (_req, res) => {
+  res.json(config.ANDROID_PACKAGE && config.ANDROID_SHA256.length
+    ? [{ relation: ['delegate_permission/common.handle_all_urls'], target: { namespace: 'android_app', package_name: config.ANDROID_PACKAGE, sha256_cert_fingerprints: config.ANDROID_SHA256 } }]
+    : []);
+});
+
 app.use('/media', express.static(config.MEDIA_DIR, { maxAge: '30d', immutable: true, index: false }));
 app.use(express.static(path.join(__dirname, '..', 'public'), { index: false, setHeaders: (res, file) => {
   if (file.endsWith('sw.js') || file.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+  else if (/\.(png|webp|svg)$/.test(file)) res.setHeader('Cache-Control', 'public, max-age=604800');
 } }));
 
 const INDEX = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
@@ -444,7 +630,7 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 function page(meta = {}) {
   const title = meta.title ? `${meta.title} | ${config.SITE_NAME}` : `${config.SITE_NAME} — Find, buy and own property with confidence`;
   const desc = meta.description || `${config.SITE_NAME} by ${config.COMPANY}: verified houses and land, easy-buy instalment plans and secure escrow.`;
-  const image = meta.image || `${config.BASE_URL}/icon-512.png`;
+  const image = meta.image || `${config.BASE_URL}/og-image.png`;
   const tags = [
     `<title>${esc(title)}</title>`,
     `<meta name="description" content="${esc(desc)}">`,
@@ -485,28 +671,39 @@ app.use((err, _req, res, _next) => {
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid request.' });
   const status = err.status || 500;
   if (status >= 500) console.error(err);
-  res.status(status).json({ error: status >= 500 && !(err instanceof HttpError) ? 'Something went wrong. Please try again.' : err.message });
+  res.status(status).json({ error: status >= 500 && !(err instanceof HttpError) ? 'Something went wrong. Please try again.' : err.message, code: err.code });
 });
 
 // Housekeeping: expired sessions / codes and stray temp uploads.
 function sweep() {
   db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
   db.prepare('DELETE FROM otps WHERE expires_at < ?').run(Date.now());
+  db.prepare("DELETE FROM payments WHERE provider = 'transfer' AND status = 'pending' AND claimed_at IS NULL AND created_at < datetime('now','-3 days')").run();
+  db.prepare("DELETE FROM requests WHERE status = 'awaiting_payment' AND created_at < datetime('now','-2 days')").run();
   for (const f of fs.readdirSync(config.TMP_DIR)) {
     const full = path.join(config.TMP_DIR, f);
     try { if (Date.now() - fs.statSync(full).mtimeMs > 6 * 3600 * 1000) fs.unlinkSync(full); } catch { /* ignore */ }
   }
 }
 
-if (require.main === module) {
+let started = false;
+function start() {
+  if (started) return;
+  started = true;
   sweep();
   setInterval(sweep, 3600 * 1000).unref();
+  experience.remind();
+  setInterval(experience.remind, 3600 * 1000).unref();
   app.listen(config.PORT, () => {
     console.log(`${config.SITE_NAME} running at ${config.BASE_URL}`);
+    if (!mail.LIVE) console.log('  Email: DEMO mode (messages are logged here). Set SMTP_HOST, SMTP_USER, SMTP_PASS.');
     if (!config.WHATSAPP_LIVE) console.log('  WhatsApp: DEMO mode (codes are logged here, not sent). Set WHATSAPP_TOKEN + WHATSAPP_PHONE_ID.');
     if (!config.PAYMENTS_LIVE) console.log('  Payments: DEMO mode (simulated checkout). Set PAYSTACK_SECRET_KEY.');
     if (!media.HAS_FFMPEG) console.log('  ffmpeg not found: videos are stored without compression.');
   });
 }
 
+if (require.main === module) start();
+
+app.start = start;
 module.exports = app;

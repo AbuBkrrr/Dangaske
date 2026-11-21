@@ -1,0 +1,16 @@
+services:
+  web:
+    build: .
+    container_name: dangaske-web
+    restart: unless-stopped
+    mem_limit: 768m           # keeps video compression from starving other apps on a shared server
+    cpus: 1.0
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data        # database, photos, ID documents - back this folder up
+    ports:
+      - "127.0.0.1:3010:3000"   # only reachable from the server itself; the reverse proxy exposes it

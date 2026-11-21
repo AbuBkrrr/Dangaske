@@ -1,13 +1,23 @@
 {
-  "name": "DanGida",
-  "short_name": "DanGida",
+  "id": "/",
+  "name": "Dangaske Real Estate",
+  "short_name": "Dangaske",
   "description": "Property marketplace by Dangaske Real Estate & Property Services Ltd",
-  "start_url": "/",
+  "start_url": "/?source=app",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#faf7f0",
-  "theme_color": "#0f3d2e",
+  "orientation": "portrait",
+  "background_color": "#f6f7fb",
+  "theme_color": "#14148a",
+  "categories": ["business", "finance", "lifestyle"],
   "icons": [
-    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Browse properties", "url": "/listings", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "My inspections", "url": "/dashboard?tab=inspections", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Messages", "url": "/dashboard?tab=messages", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
   ]
 }

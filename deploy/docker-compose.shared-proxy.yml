@@ -1,0 +1,13 @@
+# For servers where ANOTHER Caddy/nginx container already owns ports 80/443.
+# Joins the site to that proxy's Docker network so it can reach  dangaske-web:3000.
+#   PROXY_NETWORK=<network name> docker compose -f docker-compose.yml -f deploy/docker-compose.shared-proxy.yml up -d
+services:
+  web:
+    networks:
+      default: {}
+      proxy:
+        aliases: [dangaske-web]
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:?set PROXY_NETWORK to the other proxy's Docker network}

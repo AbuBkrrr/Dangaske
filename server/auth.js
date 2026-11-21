@@ -10,9 +10,10 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const sha = (s) => crypto.createHmac('sha256', config.SESSION_SECRET).update(String(s)).digest('hex');
 
 class HttpError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -62,7 +63,7 @@ function upsertUser(phone, { name, role } = {}) {
   const isAdmin = config.ADMIN_PHONES.includes(phone);
   let user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone);
   if (!user) {
-    const r = isAdmin ? 'admin' : role === 'agent' ? 'agent' : 'buyer';
+    const r = isAdmin ? 'admin' : ['agent', 'agency', 'developer', 'service'].includes(role) ? 'agent' : 'buyer';
     const info = db.prepare('INSERT INTO users(phone, name, role) VALUES(?,?,?)').run(phone, String(name || '').slice(0, 80), r);
     user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
     user.isNew = true;
@@ -110,6 +111,16 @@ function destroySession(req, res) {
 }
 
 const requireAuth = (req, _res, next) => (req.user ? next() : next(new HttpError(401, 'Please sign in first.')));
+/** Agents, agencies, developers and service providers must pass KYC before they can post or manage listings. */
+const KYC_MESSAGE = 'Complete identity verification (KYC) to post and manage listings.';
+// Posting is open to agents before verification; their listings wait for an admin instead (see submit in listings.js).
+const needKyc = () => null;
+const requireVerifiedPro = (req, _res, next) => {
+  if (!req.user) return next(new HttpError(401, 'Please sign in first.'));
+  if (req.user.role === 'admin') return next();
+  if (req.user.role !== 'agent') return next(new HttpError(403, 'Only agents can post properties.'));
+  next(needKyc(req.user) || undefined);
+};
 const requireRole = (...roles) => (req, _res, next) => {
   if (!req.user) return next(new HttpError(401, 'Please sign in first.'));
   if (!roles.includes(req.user.role)) return next(new HttpError(403, 'You do not have permission to do that.'));
@@ -131,7 +142,19 @@ function rateLimit(bucket, max, windowMs) {
 }
 setInterval(() => hits.clear(), 60 * 60 * 1000).unref();
 
+function hashPassword(pw) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  return `${salt}:${crypto.scryptSync(String(pw), salt, 64).toString('hex')}`;
+}
+function checkPassword(pw, stored) {
+  if (!stored || !String(stored).includes(':')) return false;
+  const [salt, hash] = String(stored).split(':');
+  const given = crypto.scryptSync(String(pw || ''), salt, 64);
+  return given.length === hash.length / 2 && crypto.timingSafeEqual(given, Buffer.from(hash, 'hex'));
+}
+
 module.exports = {
+  hashPassword, checkPassword,
   HttpError, normalizePhone, createOtp, checkOtp, upsertUser, createSession, destroySession,
-  loadUser, requireAuth, requireRole, rateLimit,
+  loadUser, requireAuth, requireRole, requireVerifiedPro, needKyc, rateLimit,
 };

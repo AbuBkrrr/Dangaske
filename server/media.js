@@ -8,7 +8,13 @@ const sharp = require('sharp');
 const config = require('./config');
 const { db } = require('./db');
 
-const HAS_FFMPEG = spawnSync('ffmpeg', ['-version']).status === 0;
+// Use the system ffmpeg when there is one, otherwise the copy bundled by the optional "ffmpeg-static"
+// package (useful on shared hosting, where ffmpeg is rarely installed).
+let FFMPEG = 'ffmpeg';
+if (spawnSync(FFMPEG, ['-version']).status !== 0) {
+  try { FFMPEG = require('ffmpeg-static') || FFMPEG; } catch { /* not installed */ }
+}
+const HAS_FFMPEG = spawnSync(FFMPEG, ['-version']).status === 0;
 const newName = (ext) => `${crypto.randomBytes(16).toString('hex')}.${ext}`;
 const abs = (file) => path.join(config.MEDIA_DIR, path.basename(file));
 const rm = (file) => file && fs.promises.unlink(abs(file)).catch(() => {});
@@ -25,7 +31,7 @@ async function compressImage(srcPath) {
 
 function ffmpeg(args) {
   return new Promise((resolve, reject) => {
-    const p = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args]);
+    const p = spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y', ...args]);
     let err = '';
     p.stderr.on('data', (d) => (err += d));
     p.on('error', reject);

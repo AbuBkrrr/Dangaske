@@ -2,6 +2,7 @@
 const webpush = require('web-push');
 const config = require('./config');
 const { db, getSetting, setSetting } = require('./db');
+const mail = require('./mail');
 
 let publicKey = config.VAPID_PUBLIC_KEY;
 let privateKey = config.VAPID_PRIVATE_KEY;
@@ -37,6 +38,11 @@ function notify({ userId = null, title, body = '', url = '/' }) {
   const subs = userId
     ? db.prepare('SELECT * FROM push_subs WHERE user_id = ?').all(userId)
     : db.prepare('SELECT * FROM push_subs').all();
+  // Personal notifications also go to the member's verified email address.
+  if (userId) {
+    const u = db.prepare('SELECT email FROM users WHERE id = ? AND email_verified = 1').get(userId);
+    if (u && u.email) mail.send(u.email, title, `${body}\n\nOpen: ${config.BASE_URL}${url}`);
+  }
   const payload = JSON.stringify({ title, body, url });
   for (const row of subs) {
     webpush.sendNotification(JSON.parse(row.sub), payload, { TTL: 24 * 3600 }).catch((err) => {

@@ -103,7 +103,7 @@ const FIELD_ALIASES = {
   size: 'size_sqm', sqm: 'size_sqm', document: 'title_doc', doc: 'title_doc', documents: 'title_doc',
   features: 'features', easybuy: 'easy_buy', 'easy buy': 'easy_buy', instalment: 'easy_buy', installment: 'easy_buy',
   description: 'description', desc: 'description', details: 'description', phone: 'contact_phone', contact: 'contact_phone',
-  fee: 'unlock_fee', 'unlock fee': 'unlock_fee', map: 'map_url',
+  fee: 'unlock_fee', 'unlock fee': 'unlock_fee', map: 'map_url', pin: 'map_url', location: 'map_url', 'google map': 'map_url',
 };
 
 /** Parse "Key: value" lines. Lines without a known key continue the previous value. */
@@ -231,6 +231,15 @@ function handleText(user, text) {
   }
 }
 
+/** A location pin shared in WhatsApp sets the map pin on the current draft. */
+function handleLocation(user, loc) {
+  const p = getDraft(user.phone);
+  if (!p) return 'Send NEW with the listing details first, then share the location pin.';
+  if (!loc || !Number.isFinite(Number(loc.latitude)) || !Number.isFinite(Number(loc.longitude))) return 'I could not read that location.';
+  listings.updateProperty(p.id, { map_url: `https://www.google.com/maps?q=${Number(loc.latitude).toFixed(6)},${Number(loc.longitude).toFixed(6)}` });
+  return `Location pinned on draft #${p.id}.`;
+}
+
 async function handleMedia(user, msg) {
   const item = msg[msg.type];
   let target = getDraft(user.phone);
@@ -271,6 +280,7 @@ async function handleMessage(msg) {
     if (msg.type === 'text') reply = handleText(user, msg.text.body);
     else if (msg.type === 'image' || msg.type === 'video') reply = await handleMedia(user, msg);
     else if (msg.type === 'document' && /^(image|video)\//.test(msg.document.mime_type || '')) reply = await handleMedia(user, msg);
+    else if (msg.type === 'location') reply = handleLocation(user, msg.location);
     else reply = 'I can read text commands, photos and videos. Send HELP for the menu.';
   } catch (e) {
     reply = e.status ? e.message : 'Something went wrong handling that. Please try again.';
@@ -296,4 +306,4 @@ function handleWebhook(body) {
 
 setInterval(() => db.prepare('DELETE FROM wa_seen WHERE at < ?').run(Date.now() - 3 * 24 * 3600 * 1000), 6 * 3600 * 1000).unref();
 
-module.exports = { sendText, sendOtp, verifySignature, handleWebhook, handleText, parseFields, HELP };
+module.exports = { sendText, sendOtp, verifySignature, handleWebhook, handleText, handleLocation, parseFields, HELP };
