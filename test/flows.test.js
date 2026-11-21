@@ -739,3 +739,40 @@ test('password login promotes a configured admin phone that was created as an ag
   const r = await c('POST', '/api/auth/login', { phone: '2348011111111', password: 'test-password-1' });
   assert.equal(r.body.user.role, 'admin');
 });
+
+test('public and members only ever see Dangaske contacts on listings and profiles', async () => {
+  const { setSetting } = require('../server/db');
+  setSetting('support_whatsapp', '2348000099999');
+  const agentPhone = '08044440001', buyerPhone = '08044440002';
+  const agentC = client(), buyerC = client(), pub = client(), otherAgentC = client();
+  await login(otherAgentC, '08044440003', { name: 'Other Agent', role: 'agent' });
+  const agentUser = await login(agentC, agentPhone, { name: 'Leak Agent', role: 'agent' });
+  await login(buyerC, buyerPhone, { name: 'Leak Buyer' });
+  db.prepare("UPDATE users SET verified = 1, kyc_status = 'approved' WHERE id = ?").run(agentUser.id);
+  const created = await agentC('POST', '/api/properties', { title: 'Leak test house', purpose: 'sale', type: 'house', price: 45000000, city: 'Kano', state: 'Kano', bedrooms: 3, contact_phone: agentPhone, address: '1 Test Rd' });
+  const pid = created.body.id;
+  await agentC('POST', `/api/properties/${pid}/submit`);
+  assert.equal(db.prepare('SELECT status FROM properties WHERE id = ?').get(pid).status, 'active');
+  await agentC('POST', '/api/requests', { type: 'house', purpose: 'buy', state: 'Kano', details: 'Leak test request', contact_phone: buyerPhone });
+
+  const leaks = (body) => ['2348044440001', '2348044440002', '08044440001', '08044440002'].filter((n) => JSON.stringify(body).includes(n));
+  const urls = [
+    '/api/properties', `/api/properties/${pid}`, `/api/properties?limit=8`, '/api/agents', '/api/agents?type=service',
+    `/api/agents/${agentUser.id}`, '/api/requests', '/api/markets', '/api/spvs', '/api/stats', '/api/meta', `/api/properties?owner=${agentUser.id}`,
+  ];
+  for (const [who, c] of [['public', pub], ['buyer', buyerC], ['another agent', otherAgentC]]) {
+    for (const url of urls) {
+      const r = await c('GET', url);
+      assert.deepEqual(leaks(r.body), [], `${who} sees a member number on ${url}`);
+    }
+    const page = await fetch(`${base}/p/${pid}`).then((x) => x.text());
+    assert.equal(['2348044440001', '08044440001'].some((n) => page.includes(n)), false, `${who} page leaks agent number`);
+  }
+  // Public listing contact is always Dangaske's number.
+  const full = await agentC('GET', `/api/properties/${pid}`);
+  assert.equal(full.body.contact_phone, '08044440001'); // the owner sees the number they entered
+  const listed = (await pub('GET', '/api/properties?limit=8')).body.items.find((p) => p.id === pid);
+  if (listed.contact_phone !== undefined) assert.equal(listed.contact_phone, '2348000099999'); // any contact shown is Dangaske's
+  const shown = await buyerC('GET', `/api/properties/${pid}`);
+  if (shown.body.contact_phone !== undefined) assert.equal(shown.body.contact_phone, '2348000099999');
+});
