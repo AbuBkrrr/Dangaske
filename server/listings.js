@@ -84,11 +84,14 @@ function cleanFields(input, { partial = false } = {}) {
   return out;
 }
 
+// Members never see each other's numbers: public listings show Dangaske's contact.
+const adminContact = () => require('./db').getSetting('support_whatsapp') || require('./db').getSetting('listing_whatsapp') || '';
+
 function createProperty(owner, input, source = 'web') {
   const f = cleanFields(input);
   if (!f.title) throw new HttpError(400, 'A title is required.');
   if (!f.price) throw new HttpError(400, 'A valid price is required.');
-  if (!f.contact_phone) f.contact_phone = owner.phone;
+  if (!f.contact_phone) f.contact_phone = adminContact();
   f.owner_id = owner.id;
   f.source = source;
   const keys = Object.keys(f);
@@ -162,7 +165,7 @@ function present(p, user) {
     const owner = db.prepare('SELECT name, role FROM users WHERE id = ?').get(p.owner_id);
     Object.assign(out, {
       description: p.description, address: p.address, features: p.features, title_doc: p.title_doc,
-      contact_phone: p.contact_phone, map_url: p.map_url, distance_km: p.distance_km, lat: p.lat, lng: p.lng, tour_url: p.tour_url,
+      contact_phone: canManage(user, p) ? p.contact_phone : adminContact(), map_url: p.map_url, distance_km: p.distance_km, lat: p.lat, lng: p.lng, tour_url: p.tour_url,
       listed_by: owner ? owner.name || (owner.role === 'admin' ? config.COMPANY : 'Agent') : '',
       media: db.prepare('SELECT * FROM media WHERE property_id = ? ORDER BY sort_order, id').all(p.id).map((m) => ({
         id: m.id, kind: m.kind, status: m.status, url: mediaUrl(m.file), thumb: mediaUrl(m.thumb),
@@ -316,6 +319,7 @@ function publishPendingFor(ownerId) {
 }
 
 module.exports = {
+  adminContact,
   publishPendingFor,
   hooks, inspectionFee, landDistanceKm, coordsFromLink, viewCount, recordView, PURPOSES, TYPES, int, str, naira, place, propertyUrl,
   createProperty, updateProperty, getProperty, mustGet, canManage, unlockFee, hasUnlocked,

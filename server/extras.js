@@ -32,7 +32,6 @@ const { str } = listings;
 const NG_STATES = ['Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno', 'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT Abuja', 'Gombe', 'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos', 'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto', 'Taraba', 'Yobe', 'Zamfara'];
 
 const profile = (u) => ({
-  ...(u.account_type === 'service' ? { phone: u.phone } : {}),
   id: u.id, name: u.company || u.name || 'Member', person: u.company ? u.name : '', type: u.account_type, city: u.city, bio: u.bio,
   service_category: u.service_category, verified: Boolean(u.verified), since: u.created_at,
   listings: db.prepare("SELECT COUNT(*) AS n FROM properties WHERE owner_id = ? AND status = 'active'").get(u.id).n,

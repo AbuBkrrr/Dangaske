@@ -330,10 +330,13 @@ api.get('/plans', (_req, res) => res.json(db.prepare('SELECT * FROM plans WHERE 
 
 api.post('/properties/:id/subscribe', requireAuth, (req, res) => {
   const id = payments.subscribe(req.user, listings.mustGet(req.params.id), req.body.plan_id);
-  res.status(201).json(payments.subscriptionsFor('s.id = ?', id)[0]);
+  res.status(201).json(withoutPhones(payments.subscriptionsFor('s.id = ?', id))[0]);
 });
 
-api.get('/my/subscriptions', requireAuth, (req, res) => res.json(payments.subscriptionsFor('s.user_id = ?', req.user.id)));
+// Members see each other's names but never phone numbers.
+const withoutPhones = (rows) => rows.map(({ user_phone, buyer_phone, seller_phone, ...rest }) => rest);
+
+api.get('/my/subscriptions', requireAuth, (req, res) => res.json(withoutPhones(payments.subscriptionsFor('s.user_id = ?', req.user.id))));
 
 api.post('/installments/:id/pay', requireAuth, async (req, res) => res.json(await payments.payInstallment(req.user, req.params.id)));
 
@@ -341,14 +344,14 @@ api.post('/installments/:id/pay', requireAuth, async (req, res) => res.json(awai
 
 api.post('/properties/:id/escrow', requireAuth, (req, res) => {
   const id = payments.createEscrow(req.user, listings.mustGet(req.params.id), req.body);
-  res.status(201).json(payments.escrowsFor('e.id = ?', id)[0]);
+  res.status(201).json(withoutPhones(payments.escrowsFor('e.id = ?', id))[0]);
 });
 
 api.get('/my/escrows', requireAuth, async (req, res) => {
   // Catch up with PayScrow for escrows still waiting on it (a webhook may be late).
   for (const e of db.prepare("SELECT * FROM escrows WHERE (buyer_id = ? OR seller_id = ?) AND ps_number != '' AND status IN ('awaiting_payment','funded','disputed') LIMIT 5").all(req.user.id, req.user.id)) await payscrow.sync(e);
   const rows = payments.escrowsFor('e.buyer_id = ? OR e.seller_id = ?', req.user.id, req.user.id);
-  res.json(rows.map((e) => ({ ...e, role: e.buyer_id === req.user.id ? 'buyer' : 'seller' })));
+  res.json(withoutPhones(rows).map((e) => ({ ...e, role: e.buyer_id === req.user.id ? 'buyer' : 'seller' })));
 });
 
 api.post('/escrows/:id/pay', requireAuth, async (req, res) => res.json(await payments.payEscrow(req.user, req.params.id)));
@@ -409,15 +412,15 @@ api.post('/requests', requireAuth, async (req, res) => {
 });
 
 api.get('/requests', (req, res) => {
-  const pro = req.user && ['agent', 'admin'].includes(req.user.role);
+  const isAdmin = Boolean(req.user && req.user.role === 'admin');
   const rows = db
     .prepare("SELECT r.*, u.name AS user_name, u.role AS user_role FROM requests r JOIN users u ON u.id = r.user_id WHERE r.status = 'open' ORDER BY r.id DESC LIMIT 100")
     .all();
   res.json(rows.map((r) => {
     const mine = req.user && r.user_id === req.user.id;
     const { contact_phone, user_name, user_id, ...rest } = r;
-    // Contact details are only shown to agents and admins.
-    return { ...rest, mine: Boolean(mine), ...(pro || mine ? { contact_phone, user_name } : {}) };
+    // Contact details are only shown to the requester and admins; everyone else messages Dangaske.
+    return { ...rest, mine: Boolean(mine), ...(mine || isAdmin ? { contact_phone, user_name } : {}) };
   }));
 });
 

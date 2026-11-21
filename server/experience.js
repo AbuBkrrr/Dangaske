@@ -144,8 +144,8 @@ function confirmInspection(i, after) {
   after.push(() => {
     push.notify({ userId: agent.id, title: 'Inspection confirmed (fee paid)', body: `${buyer.name || 'A buyer'} · ${p.title} · ${when(i.slot)}`, url: '/dashboard?tab=inspections' });
     push.notify({ userId: buyer.id, title: 'Inspection confirmed', body: `${p.title} · ${when(i.slot)}`, url: '/dashboard?tab=inspections' });
-    wa(agent.phone, `Inspection CONFIRMED - the buyer has paid the inspection fee.\n${p.title} (#${p.id})\n${when(i.slot)}\nBuyer: ${buyer.name} +${buyer.phone}${i.note ? `\nNote: ${i.note}` : ''}`);
-    wa(buyer.phone, `Your inspection is confirmed.\n${p.title}\n${when(i.slot)}\nAddress: ${p.address || listings.place(p)}\nContact: ${p.contact_phone}\nYour fee is credited towards the price if you buy through ${config.SITE_NAME} escrow.`);
+    wa(agent.phone, `Inspection CONFIRMED - the buyer has paid the inspection fee.\n${p.title} (#${p.id})\n${when(i.slot)}\nBuyer: ${buyer.name}${i.note ? `\nNote: ${i.note}` : ''}`);
+    wa(buyer.phone, `Your inspection is confirmed.\n${p.title}\n${when(i.slot)}\nAddress: ${p.address || listings.place(p)}\nContact: ${listings.adminContact()}\nYour fee is credited towards the price if you buy through ${config.SITE_NAME} escrow.`);
   });
 }
 
@@ -183,7 +183,7 @@ const inspectionRows = (where, ...args) => db
 
 r.get('/my/inspections', requireAuth, (req, res) => {
   res.json(inspectionRows("(i.user_id = ? OR (i.agent_id = ? AND i.status != 'awaiting_payment'))", req.user.id, req.user.id)
-    .map((i) => ({ ...i, role: i.user_id === req.user.id ? 'buyer' : 'agent' })));
+    .map(({ buyer_phone, ...i }) => ({ ...i, role: i.user_id === req.user.id ? 'buyer' : 'agent', contact_phone: listings.adminContact() })));
 });
 
 function mustInspection(req) {
@@ -234,9 +234,21 @@ const threadView = (t, user) => {
     unread: t.last_id > t[`${mine}_seen`], last: last ? last.body.slice(0, 80) : '', last_at: last ? last.created_at : '',
   };
 };
+// Conversations are between a member and Dangaske (an admin). Admins can open any conversation they are part of.
+const supportId = () => {
+  const a = db.prepare("SELECT id FROM users WHERE role = 'admin' AND suspended = 0 ORDER BY id LIMIT 1").get();
+  if (!a) throw new HttpError(503, 'Messaging is not available right now. Please try again shortly.');
+  return a.id;
+};
+const canUseThread = (t, user) => {
+  if (![t.buyer_id, t.seller_id].includes(user.id)) return false;
+  if (user.role === 'admin') return true;
+  const other = t.buyer_id === user.id ? t.seller_id : t.buyer_id;
+  return Boolean(db.prepare("SELECT 1 FROM users WHERE id = ? AND role = 'admin'").get(other));
+};
 const mustThread = (req) => {
   const t = db.prepare('SELECT * FROM threads WHERE id = ?').get(num(req.params.id));
-  if (!t || ![t.buyer_id, t.seller_id].includes(req.user.id)) throw new HttpError(404, 'Conversation not found.');
+  if (!t || !canUseThread(t, req.user)) throw new HttpError(404, 'Conversation not found.');
   return t;
 };
 
@@ -245,13 +257,17 @@ r.post('/properties/:id/chat', requireAuth, (req, res) => {
   if (!['active', 'sold'].includes(p.status)) throw new HttpError(404, 'Listing not found.');
   if (p.owner_id === req.user.id) throw new HttpError(400, 'This is your own listing.');
   if (!fullAccess(req.user, p)) throw new HttpError(403, 'Unlock this listing to message the agent.');
-  db.prepare('INSERT OR IGNORE INTO threads(property_id, buyer_id, seller_id) VALUES(?,?,?)').run(p.id, req.user.id, p.owner_id);
+  if (req.user.role === 'admin') throw new HttpError(400, 'Reply to members from the conversations list.');
+  const admin = supportId();
+  db.prepare('INSERT OR IGNORE INTO threads(property_id, buyer_id, seller_id) VALUES(?,?,?)').run(p.id, req.user.id, admin);
+  // Older conversations with an agent move to Dangaske, so agents no longer see them.
+  db.prepare('UPDATE threads SET seller_id = ? WHERE property_id = ? AND buyer_id = ? AND seller_id != ?').run(admin, p.id, req.user.id, admin);
   res.json({ id: db.prepare('SELECT id FROM threads WHERE property_id = ? AND buyer_id = ?').get(p.id, req.user.id).id });
 });
 
 r.get('/my/threads', requireAuth, (req, res) => {
   const rows = db.prepare('SELECT * FROM threads WHERE (buyer_id = ? OR seller_id = ?) AND last_id > 0 ORDER BY last_id DESC LIMIT 100').all(req.user.id, req.user.id);
-  res.json(rows.map((t) => threadView(t, req.user)));
+  res.json(rows.filter((t) => canUseThread(t, req.user)).map((t) => threadView(t, req.user)));
 });
 
 r.get('/threads/:id', requireAuth, (req, res) => {

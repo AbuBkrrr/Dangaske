@@ -66,7 +66,7 @@
         <button class="btn gold block">${fee ? `Pay <span class="notranslate">${money(fee)}</span> to confirm` : 'Confirm booking'}</button></form>
         <p class="small muted">${fee ? `The inspection fee confirms your appointment${p.locked ? ', unlocks the full address' : ''} and is <b>deducted from the price</b> if you buy through escrow.${p.type === 'land' ? ' For land the fee depends on the distance from the city centre.' : ''}` : 'The agent will be notified at once.'}</p></div>` : ''}
       <div class="row"><button class="btn sm ghost" data-act="fav" data-long="1" data-id="${p.id}">${p.fav ? '♥ Saved' : '♡ Save'}</button><button class="btn sm ghost" data-act="cmp" data-id="${p.id}">⇄ Compare</button>
-        ${!p.can_manage && !p.locked ? `<button class="btn sm" id="chatbtn">💬 Message agent</button>` : ''}</div>
+        ${!p.can_manage && !p.locked ? `<button class="btn sm" id="chatbtn">💬 Message Dangaske</button>` : ''}</div>
       ${!sold && !p.can_manage && S.cfg.title_check_fee ? `<div class="card"><h3>Title verification report</h3><p class="small muted">We search the land registry for this property and send you a written report on ownership and encumbrances.</p><button class="btn sm block" id="tcbtn">Order for <span class="notranslate">${money(S.cfg.title_check_fee)}</span></button></div>` : ''}`;
     const near = String(p.nearby || '').split(',').map((x) => x.trim()).filter(Boolean);
     const d = 0.006;
@@ -89,7 +89,7 @@
     const q = new URLSearchParams(location.search), open = Number(q.get('t')) || 0;
     const list = await api('/my/threads');
     const cur = open ? await api('/threads/' + open) : null;
-    return `<div class="chat"><div class="tlist">${list.map((t) => `<a href="/dashboard?tab=messages&t=${t.id}" data-link class="${t.id === open ? 'on' : ''} ${t.unread ? 'unread' : ''}"><b>${e(t.with)}</b><br><span class="small muted">${e(t.property_title)}</span><br><span class="small">${e(t.last)}</span></a>`).join('') || (cur ? '' : '<p class="muted">No conversations yet. Open a listing you have unlocked and tap “Message agent”.</p>')}</div>
+    return `<div class="chat"><div class="tlist">${list.map((t) => `<a href="/dashboard?tab=messages&t=${t.id}" data-link class="${t.id === open ? 'on' : ''} ${t.unread ? 'unread' : ''}"><b>${e(t.with)}</b><br><span class="small muted">${e(t.property_title)}</span><br><span class="small">${e(t.last)}</span></a>`).join('') || (cur ? '' : '<p class="muted">No conversations yet. Open a listing you have unlocked and tap “Message Dangaske”.</p>')}</div>
       <div>${cur ? `<p><b>${e(cur.with)}</b> · <a href="/p/${cur.property_id}" data-link>${e(cur.property_title)}</a></p><div class="msgs" id="msgs" data-t="${cur.id}"></div>
         <form id="sendf" class="row" style="margin-top:8px"><input name="body" maxlength="2000" placeholder="Type a message" autocomplete="off" style="flex:1" required><button class="btn">Send</button></form>
         <p class="small muted">Keep payments on the platform — never pay a seller outside escrow.</p>` : list.length ? '<p class="muted">Choose a conversation.</p>' : ''}</div></div>`;
@@ -121,7 +121,7 @@
       if (ok && i.role === 'agent') acts.push(`<button class="btn sm" data-ist="${i.id}" data-s="completed">Done</button>`, `<button class="btn sm ghost" data-ist="${i.id}" data-s="no_show">No-show</button>`);
       if (ok || (i.status === 'awaiting_payment' && i.role === 'buyer')) acts.push(`<button class="btn sm ghost" data-ist="${i.id}" data-s="cancelled">Cancel</button>`);
       return `<tr><td class="nowrap"><b>${when(i.slot)}</b></td><td><a href="/p/${i.property_id}" data-link>${e(i.property_title)}</a>${ok && i.role === 'buyer' && i.address ? `<br><span class="small">${e(i.address)}</span>` : ''}${i.note ? `<br><span class="small muted">“${e(i.note)}”</span>` : ''}</td>
-        <td class="small notranslate">${i.role === 'agent' ? `${e(i.buyer_name)}<br>+${e(i.buyer_phone)}` : i.status === 'awaiting_payment' ? '—' : `${e(i.agent_name)}<br>${e(i.contact_phone)}`}</td>
+        <td class="small notranslate">${i.role === 'agent' ? e(i.buyer_name) : i.status === 'awaiting_payment' ? '—' : `Dangaske<br>${e(i.contact_phone)}`}</td>
         <td>${status(i.status)}<br><span class="small muted notranslate">${i.fee ? money(i.fee) + (i.status === 'awaiting_payment' ? ' unpaid' : ' paid') : 'No fee'}</span></td><td><div class="row">${acts.join('')}</div></td></tr>`;
     }).join('')}</table></div><p class="small muted">Inspection fees are deducted from the price if you buy through escrow. If the agent cancels a paid inspection, the fee is refunded.</p>`;
   };

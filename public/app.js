@@ -386,7 +386,7 @@
     const rows = await api('/requests');
     const budget = (r) => (r.min_price || r.max_price ? `${r.min_price ? money(r.min_price) : 'Any'} – ${r.max_price ? money(r.max_price) : 'Any'}` : 'Open budget');
     app.innerHTML = `<div class="spread" style="margin-top:28px"><h1>Property requests</h1><a class="btn gold" href="/request" data-link>+ Add a request</a></div>
-      <p class="muted">What buyers and agents are looking for right now. ${S.user && ['agent', 'admin'].includes(S.user.role) ? '' : 'Contact details are visible to registered agents.'}</p>
+      <p class="muted">What buyers and agents are looking for right now. Contact details are kept private. Message Dangaske to connect.</p>
       <div class="grid g2">${rows.map((r) => `<div class="card"><div class="spread"><h3>${e(cap(r.type || 'Property'))} to ${r.purpose === 'sale' ? 'buy' : e(r.purpose)}</h3>${r.mine ? '<span class="status open">Yours</span>' : ''}</div>
         <p class="small muted">${e([r.city, r.state].filter(Boolean).join(', ') || 'Any location')} · ${r.bedrooms ? r.bedrooms + '+ beds · ' : ''}<span class="notranslate">${budget(r)}</span> · ${date(r.created_at)}</p>
         <p class="prose">${e(r.details)}</p>

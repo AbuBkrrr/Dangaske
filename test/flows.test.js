@@ -131,7 +131,8 @@ test('agent listing needs approval; property requests', async () => {
   assert.equal((await anon('GET', '/api/requests')).body.length, 0); // unpaid requests stay hidden
   await buyer('POST', `/api/payments/demo/${req.body.reference}`);
   assert.equal((await anon('GET', '/api/requests')).body[0].contact_phone, undefined);
-  assert.equal((await agent('GET', '/api/requests')).body[0].contact_phone, '2348022222222');
+  assert.equal((await agent('GET', '/api/requests')).body[0].contact_phone, undefined); // agents message Dangaske instead
+  assert.equal((await admin('GET', '/api/requests')).body[0].contact_phone, '2348022222222');
   assert.equal((await agent('POST', `/api/admin/properties/${p.body.id}/approve`)).status, 403);
   assert.equal((await admin('POST', `/api/admin/properties/${p.body.id}/approve`)).status, 409); // already live: verified agents publish at once
   const late = await admin('POST', '/api/properties', { title: 'Late dry land', price: 5000000, type: 'land', state: 'Kano' });
@@ -326,9 +327,10 @@ test('customer experience: paid inspection, chat, saved search, receipts, review
   const th = (await cust('POST', `/api/properties/${pid}/chat`)).body.id;
   await cust('POST', `/api/threads/${th}/messages`, { body: 'Is the price negotiable?' });
   assert.equal((await buyer('GET', `/api/threads/${th}`)).status, 404); // private
-  assert.equal((await agent('GET', '/api/my/threads')).body[0].unread, true);
-  assert.equal((await agent('GET', `/api/threads/${th}`)).body.messages[0].body, 'Is the price negotiable?');
-  assert.equal((await agent('GET', '/api/my/threads')).body[0].unread, false);
+  assert.equal((await agent('GET', `/api/threads/${th}`)).status, 404); // members never talk to each other
+  assert.equal((await admin('GET', '/api/my/threads')).body[0].unread, true);
+  assert.equal((await admin('GET', `/api/threads/${th}`)).body.messages[0].body, 'Is the price negotiable?');
+  assert.equal((await admin('GET', '/api/my/threads')).body[0].unread, false);
 
   db.prepare('UPDATE inspections SET slot = ? WHERE id = ?').run(iso, mineI[0].id);
   assert.equal(experience.remind().inspections, slot.getTime() - Date.now() <= 24 * 3600 * 1000 ? 1 : 0);
@@ -458,7 +460,7 @@ test('services directory lists only verified providers, by category', async () =
   db.prepare("UPDATE users SET account_type = 'service', service_category = 'legal' WHERE phone = '2348033333333'").run();
   const rows = (await anon('GET', '/api/agents?type=service&category=legal')).body;
   assert.equal(rows.length, 1);
-  assert.match(rows[0].phone, /^234/); // providers are meant to be contacted
+  assert.equal(rows[0].phone, undefined); // no personal numbers: members message Dangaske
   assert.equal((await anon('GET', '/api/agents?type=service&category=surveying')).body.length, 0);
   db.prepare("UPDATE users SET verified = 0 WHERE phone = '2348033333333'").run();
   assert.equal((await anon('GET', '/api/agents?type=service')).body.length, 0); // unverified providers stay hidden
